@@ -49,7 +49,7 @@ Company（公司/组织）
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│               DevRelay (单一 Next.js 进程)                        │
+│               DevRelay (Custom Server 单进程)                     │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │                    Web UI (React)                           │  │
@@ -57,12 +57,13 @@ Company（公司/组织）
 │  │  │ PM 视图  │ 架构师   │ 开发视图 │ QA 视图  │ 交付经理 │  │  │
 │  │  └──────────┴──────────┴──────────┴──────────┴──────────┘  │  │
 │  ├────────────────────────────────────────────────────────────┤  │
-│  │                API + 流程引擎 (tRPC)                        │  │
+│  │              API + 流程引擎 (tRPC)                          │  │
 │  │  ┌────────┬────────┬──────────┬──────────┬──────────────┐  │  │
-│  │  │空间管理│项目管理│ 流程引擎 │GitHub集成│Agent调度     │  │  │
+│  │  │空间管理│用户认证│ 流程引擎 │GitHub集成│Agent调度(CLI)│  │  │
 │  │  └────────┴────────┴──────────┴──────────┴──────────────┘  │  │
 │  ├────────────────────────────────────────────────────────────┤  │
-│  │  SQLite (单文件)  │  .md 文档目录  │  Agent 适配器        │  │
+│  │  SQLite    │  .md 文档  │  Socket.io  │  Agent spawn      │  │
+│  │  (单文件)  │  目录      │  (WebSocket) │  (子进程流式)     │  │
 │  └────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -95,11 +96,165 @@ Company（公司/组织）
 - `rejected` 携带评审意见回退到上一步
 - `completed` 自动解锁下一步
 
-## 数据模型（Drizzle ORM + SQLite）
+## 用户认证体系
 
-> 以下使用 Drizzle ORM 的 schema 定义风格。SQLite 原生类型：`integer`（整数/布尔）、`text`（字符串/JSON）、`blob`（二进制）。所有模型在 `src/lib/db/schema.ts` 中定义。
+### 登录方式
 
-### Workspace（空间）
+内置用户名 + 密码登录（NextAuth.js Credentials Provider），密码 bcrypt 加密存储。
+
+### 多用户模型
+
+- 每个用户可创建自己的 Workspace（自动成为该空间 Admin）
+- 用户可通过**邀请链接**或**邀请码**邀请其他用户加入空间
+- 管理员用户可查看和管理所有空间和用户
+- 初始管理员账号通过环境变量 `ADMIN_USER` / `ADMIN_PASS` 在首次启动时自动创建
+
+### User 表
+
+```typescript
+export const users = sqliteTable('users', {
+  id:            text('id').primaryKey(),
+  username:      text('username').notNull().unique(),
+  passwordHash:  text('password_hash').notNull(),        // bcrypt
+  displayName:   text('display_name'),
+  isAdmin:       integer('is_admin', { mode: 'boolean' }).default(false),
+  createdAt:     text('created_at').notNull(),
+  updatedAt:     text('updated_at').notNull(),
+});
+```
+
+### Workspace 邀请
+
+```typescript
+export const invitations = sqliteTable('invitations', {
+  id:          text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  code:        text('code').notNull().unique(),          // 邀请码，如 "devrelay-abc123"
+  createdBy:   text('created_by').notNull(),             // 发起人 userId
+  role:        text('role').notNull().default('developer'),
+  usedBy:      text('used_by'),                          // 接受人 userId
+  expiresAt:   text('expires_at'),
+  createdAt:   text('created_at').notNull(),
+});
+```
+
+### 通知模型
+
+```typescript
+export const notifications = sqliteTable('notifications', {
+  id:            text('id').primaryKey(),
+  userId:        text('user_id').notNull(),              // 接收人
+  title:         text('title').notNull(),
+  message:       text('message'),
+  type:          text('type').notNull(),                 // stage_assigned / stage_rejected / stage_approved / task_assigned / pr_opened / comment
+  isRead:        integer('is_read', { mode: 'boolean' }).default(false),
+  projectId:     text('project_id'),                     // 关联项目
+  stageId:       text('stage_id'),                       // 关联阶段
+  taskId:        text('task_id'),                        // 关联任务
+  createdAt:     text('created_at').notNull(),
+});
+```
+
+通知规则：流程中每个阶段的 `assignedTo` 角色对应成员 → 阶段状态变更 → 自动创建通知记录 → WebSocket 实时推送。
+
+### WorkspaceMember 更新
+
+```typescript
+// 原 workspaceMembers 表增加 invite 相关字段即可
+// userId 在邀请接受前可为空
+```
+
+---
+
+## 技术实现要点
+
+### WebSocket 实现：Custom Server
+
+Next.js App Router 不原生支持 WebSocket，采用 custom server 包装方案：
+
+```typescript
+// server.ts — 入口文件，替代 npx next start
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import next from 'next';
+import { setupWorkflowNotifier } from './src/lib/notify';
+
+const app = next({ dev: process.env.NODE_ENV !== 'production' });
+const handle = app.getRequestHandler();
+
+app.prepare().then(() => {
+  const server = createServer(handle);
+  const io = new SocketIOServer(server);
+
+  io.on('connection', (socket) => {
+    // 用户加入自己的通知频道
+    socket.on('subscribe', (userId: string) => {
+      socket.join(`user:${userId}`);
+    });
+  });
+
+  // 挂载 io 供 API 路由使用
+  globalThis.io = io;
+  setupWorkflowNotifier(io);  // 阶段变更 → 推送通知
+
+  server.listen(3000);
+});
+```
+
+### Agent CLI 通信方案
+
+Claude Code、Codex 等是 CLI 工具，通过 Node.js 子进程方式调用：
+
+```typescript
+// src/lib/agents/spawn.ts
+import { spawn } from 'child_process';
+
+interface AgentSpawnConfig {
+  execPath: string;        // CLI 可执行文件路径，如 "/usr/bin/claude"
+  argsTemplate: string;    // 参数模板，如 '-p "{prompt}" --output-format stream-json'
+  env: Record<string, string>;  // 环境变量（API key 等）
+  cwd?: string;            // 工作目录（项目仓库路径）
+}
+
+async function runAgent(config: AgentSpawnConfig, prompt: string): Promise<ReadableStream> {
+  const args = config.argsTemplate
+    .replace('{prompt}', prompt)
+    .split(' ');
+  
+  const child = spawn(config.execPath, args, {
+    env: { ...process.env, ...config.env },
+    cwd: config.cwd,
+  });
+
+  // 流式返回 stdout，支持实时展示
+  return child.stdout;
+}
+```
+
+Agent 适配器只需提供 `execPath` + `argsTemplate` + `env`，通过 `child_process.spawn` 拉起，stdout 流式输出。长任务走 SQLite 内置队列异步执行。
+
+### 原型图在 Markdown 中的处理
+
+原型图可以多种方式嵌入 `.md` 文件：
+
+1. **ASCII 线框图**（简单交互直接画）
+   ```
+   ┌──────────┐  点击「提交」  ┌──────────┐
+   │ 订单列表  │ ────────────→ │ 订单详情  │
+   └──────────┘               └──────────┘
+   ```
+
+2. **外部链接**（Figma / 设计稿 URL）
+   ```markdown
+   [原型图 - Figma](https://figma.com/file/xxx)
+   ```
+
+3. **本地图片**（截图放在 `docs/images/` 目录）
+   ```markdown
+   ![登录页原型](images/login-prototype.png)
+   ```
+
+原型图 `.md` 文件名称：`03-prototype-v1.md`
 
 ```typescript
 export const workspaces = sqliteTable('workspaces', {
@@ -316,6 +471,7 @@ export const activities = sqliteTable('activities', {
 
 ```
 data/
+├── devrelay.db                               # SQLite 数据库文件
 ├── {workspace-slug}/                        # 空间目录
 │   ├── projects/
 │   │   └── {project-id}/                    # 项目目录
@@ -334,7 +490,6 @@ data/
 │   └── config/                              # 空间配置
 │       ├── settings.json
 │       └── agents.json
-└── devrelay.db                               # SQLite 数据库文件
 ```
 
 ### 文档版本管理
@@ -544,11 +699,12 @@ GET    /api/projects/:id/activities      # 项目活动
 ## 开发计划（7 个 Phase）
 
 ### Phase 1：基础框架（Week 1-2）
-- [ ] 初始化 Next.js 项目 + TypeScript + Tailwind
-- [ ] Drizzle ORM + SQLite schema（所有表）
+- [ ] 初始化 Next.js 项目 + TypeScript + Tailwind + Custom Server (`server.ts`)
+- [ ] Drizzle ORM + SQLite schema（users, workspaces, repositories, ... 全部表）
 - [ ] data/ 目录结构 + .md 文件读写
-- [ ] NextAuth.js + SQLite 适配 + RBAC
-- [ ] 基础 UI 框架（布局、导航、空间列表页）
+- [ ] 用户认证：Credentials Provider + bcrypt + admin 初始账号（`ADMIN_USER`/`ADMIN_PASS`）
+- [ ] 基础 UI 框架（布局、导航、登录页、空间列表页）
+- [ ] `.env` 配置加载
 - [ ] 开发环境一键启动（`npm run dev`）
 
 ### Phase 2：空间 + 仓库管理（Week 3-4）
@@ -598,22 +754,26 @@ GET    /api/projects/:id/activities      # 项目活动
 
 ```
 devrelay/
+├── server.ts                         # Custom Server 入口（Next.js + Socket.io）
 ├── data/                             # 运行时数据目录（all in one 核心）
 │   ├── devrelay.db                   # SQLite 数据库（单文件）
 │   └── {workspace-slug}/             # 空间数据目录
 │       ├── projects/{id}/docs/       # .md 文档文件
+│       │   └── images/               # 原型图/附件图片
 │       ├── projects/{id}/tasks/      # 任务附件
 │       └── config/                   # 空间配置 (settings.json, agents.json)
 ├── src/
 │   ├── app/                          # Next.js App Router
 │   │   ├── layout.tsx
-│   │   ├── page.tsx                  # 首页（空间列表）
+│   │   ├── page.tsx                  # 首页（空间列表 → 未登录重定向到登录页）
+│   │   ├── login/                    # 登录页
+│   │   ├── settings/                 # 全局/个人设置
 │   │   └── workspaces/
 │   │       └── [slug]/
 │   │           ├── page.tsx          # 空间首页仪表盘
-│   │           ├── repos/            # 仓库管理
+│   │           ├── repos/            # 仓库管理（GitHub OAuth 绑定）
 │   │           ├── agents/           # Agent池管理
-│   │           ├── settings/         # 空间设置
+│   │           ├── settings/         # 空间设置（成员+邀请）
 │   │           └── projects/
 │   │               ├── page.tsx      # 项目列表
 │   │               └── [id]/
@@ -625,27 +785,31 @@ devrelay/
 │   │                   └── settings/ # 项目设置
 │   ├── components/
 │   │   ├── ui/                       # 通用UI组件
+│   │   ├── auth/                     # 登录/注册组件
 │   │   ├── workspace/                # 空间相关组件
 │   │   ├── workflow/                 # 流程看板组件
 │   │   ├── documents/                # Markdown编辑器组件
 │   │   ├── tasks/                    # 任务组件
 │   │   ├── github/                   # GitHub联动组件
-│   │   └── agents/                   # Agent配置组件
+│   │   ├── agents/                   # Agent配置组件
+│   │   └── notifications/            # 通知中心组件
 │   ├── lib/
 │   │   ├── db/                       # Drizzle schema + client
-│   │   ├── auth/                     # 认证逻辑
-│   │   ├── workflow/                 # 流程引擎
+│   │   ├── auth/                     # 认证逻辑（NextAuth Credentials + bcrypt）
+│   │   ├── workflow/                 # 流程引擎（状态机）
 │   │   ├── docs/                     # .md 文件读写服务
-│   │   ├── github/                   # GitHub集成（Octokit + Webhook）
-│   │   ├── agents/                   # Agent适配器 + 内置任务队列
+│   │   ├── github/                   # GitHub集成（Octokit + OAuth + Webhook）
+│   │   ├── agents/                   # Agent适配器（spawn子进程） + 内置任务队列
+│   │   ├── notify/                   # 通知服务（WebSocket 推送）
 │   │   └── api/                      # tRPC routers
 │   ├── server/
 │   │   ├── routers/                  # tRPC路由
 │   │   ├── webhooks/                 # Webhook处理
 │   │   └── middleware/               # 服务端中间件
-│   └── types/                        # 类型定义
+│   └── types/                        # 全局类型定义
 ├── public/
 ├── tests/
+├── .env.example                      # 环境变量示例
 ├── drizzle.config.ts                 # Drizzle 配置
 ├── next.config.js
 ├── package.json
@@ -659,6 +823,35 @@ devrelay/
 | 架构师 | Claude Code | 技术方案设计、代码评审 |
 | 开发 | Claude Code / Codex | 编码实现 |
 | QA | Claude Code | E2E 测试编写 |
+
+## 环境配置（.env）
+
+```bash
+# ===== 管理员初始账号 =====
+ADMIN_USER=admin                     # 首次启动自动创建
+ADMIN_PASS=devrelay2026              # 首次启动后请修改
+
+# ===== 数据库与存储 =====
+DATABASE_PATH=./data/devrelay.db     # SQLite 文件路径
+DATA_DIR=./data                      # .md 文档 + 配置目录
+
+# ===== NextAuth =====
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=change-me-to-random-string
+
+# ===== GitHub OAuth App =====
+GITHUB_CLIENT_ID=                    # GitHub OAuth App Client ID
+GITHUB_CLIENT_SECRET=                # GitHub OAuth App Client Secret
+GITHUB_CALLBACK_URL=http://localhost:3000/api/auth/callback/github
+
+# ===== Agent 默认路径（可选，用户可在 UI 中覆盖）=====
+CLAUDE_CODE_PATH=claude              # 或 /usr/local/bin/claude
+CODEX_PATH=codex
+HERMES_PATH=hermes
+```
+
+启动顺序：
+1. 读取 `.env` → 2. 初始化 SQLite → 3. 检查 `ADMIN_USER` 是否存在 → 4. 不存在则用 `ADMIN_PASS` bcrypt 创建 → 5. 启动 custom server
 
 ## 待确认事项
 
