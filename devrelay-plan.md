@@ -4,6 +4,10 @@
 
 DevRelay 是一个面向软件交付团队的 Web 平台，将完整的软件开发交付流程（需求→设计→开发→测试→部署→交付）数字化、自动化。
 
+**设计原则**：
+- **All in One**：单个进程运行，无需外部依赖（无 Redis、无独立数据库服务、无对象存储），部署只需 Node.js + 一个 SQLite 文件 + 一个文档目录
+- **文档即 Markdown 文件**：PRD、技术方案、评审报告等一律存储为 `.md` 文件，轻量、可 Git 版本控制、可直接用编辑器打开修改
+
 **核心能力**：
 - 以**空间（Workspace）**组织多仓库（前端/后端等）和多交付项目
 - 对接 GitHub（Issue / PR / Commit / Branch / Webhook），实现代码与流程双向联动
@@ -31,39 +35,35 @@ Company（公司/组织）
 
 | 层级 | 技术选型 | 说明 |
 |------|---------|------|
-| 前端 | Next.js 14 (App Router) + TypeScript + Tailwind CSS | 服务端渲染，类型安全 |
-| 后端 API | Next.js API Routes + tRPC | 端到端类型安全 |
-| 数据库 | PostgreSQL + Prisma ORM | 关系型数据，结构化查询 |
-| 实时通信 | WebSocket (Socket.io) | 流程状态实时推送 |
-| 认证 | NextAuth.js + RBAC | 角色权限控制 |
+| 前端 + 后端 | Next.js 14 (App Router) + TypeScript + Tailwind CSS | 全栈一体，一个进程搞定 |
+| 数据库 | SQLite + Drizzle ORM | 零配置单文件数据库，all in one 核心 |
+| 实时通信 | WebSocket (Socket.io) | 流程状态实时推送，内置于 Next.js |
+| 认证 | NextAuth.js + RBAC | 内置认证，SQLite 适配 |
 | GitHub 对接 | Octokit (REST + GraphQL) + Webhook | Issue/PR/Commit 管理 |
 | AI Agent 集成 | Plugin 架构 + REST 适配器 | 统一接入各智能体 |
-| 任务队列 | BullMQ + Redis | 异步任务、Agent 调度 |
-| 文件存储 | MinIO / S3 | PRD、原型图、技术文档存储 |
-| 容器化 | Docker + Docker Compose | 开发/部署一致性 |
+| 异步任务 | 内置简单任务队列（基于 SQLite 轮询） | 无需 Redis |
+| 文件存储 | **本地 .md 文件** | PRD、技术方案、评审报告等全部保存为 Markdown 文件 |
+| 部署 | `npx next start` 或单容器 Docker | 一个进程，一个端口 |
 
 ## 系统架构
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                       Web UI (Next.js)                            │
-│  ┌──────────┬──────────┬──────────┬──────────┬───────────────┐   │
-│  │ PM 视图  │ 架构师   │ 开发视图 │ QA 视图  │ 交付经理视图  │   │
-│  │          │ 视图     │          │          │               │   │
-│  └──────────┴──────────┴──────────┴──────────┴───────────────┘   │
-├──────────────────────────────────────────────────────────────────┤
-│                      API Layer (tRPC)                             │
-│  ┌────────┬────────┬──────────┬──────────┬────────┬──────────┐   │
-│  │空间管理│项目管理│ 流程引擎 │ 文档管理 │任务管理│GitHub集成│   │
-│  └────────┴────────┴──────────┴──────────┴────────┴──────────┘   │
-├──────────────────────────────────────────────────────────────────┤
-│                     Agent Integration Layer                       │
-│  ┌──────────────┬──────────┬──────────┬──────────┬──────────┐    │
-│  │  Agent Pool  │ Claude   │  Codex   │  Hermes  │OpenClaw..│    │
-│  │ (共享/独享)  │  Code    │          │          │          │    │
-│  └──────────────┴──────────┴──────────┴──────────┴──────────┘    │
-├──────────────────────────────────────────────────────────────────┤
-│                Data Layer (PostgreSQL + Redis)                    │
+│               DevRelay (单一 Next.js 进程)                        │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                    Web UI (React)                           │  │
+│  │  ┌──────────┬──────────┬──────────┬──────────┬──────────┐  │  │
+│  │  │ PM 视图  │ 架构师   │ 开发视图 │ QA 视图  │ 交付经理 │  │  │
+│  │  └──────────┴──────────┴──────────┴──────────┴──────────┘  │  │
+│  ├────────────────────────────────────────────────────────────┤  │
+│  │                API + 流程引擎 (tRPC)                        │  │
+│  │  ┌────────┬────────┬──────────┬──────────┬──────────────┐  │  │
+│  │  │空间管理│项目管理│ 流程引擎 │GitHub集成│Agent调度     │  │  │
+│  │  └────────┴────────┴──────────┴──────────┴──────────────┘  │  │
+│  ├────────────────────────────────────────────────────────────┤  │
+│  │  SQLite (单文件)  │  .md 文档目录  │  Agent 适配器        │  │
+│  └────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -95,304 +95,301 @@ Company（公司/组织）
 - `rejected` 携带评审意见回退到上一步
 - `completed` 自动解锁下一步
 
-## 数据模型
+## 数据模型（Drizzle ORM + SQLite）
+
+> 以下使用 Drizzle ORM 的 schema 定义风格。SQLite 原生类型：`integer`（整数/布尔）、`text`（字符串/JSON）、`blob`（二进制）。所有模型在 `src/lib/db/schema.ts` 中定义。
 
 ### Workspace（空间）
 
-```prisma
-model Workspace {
-  id           String        @id @default(cuid())
-  name         String
-  slug         String        @unique            // URL 友好标识
-  description  String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-
-  repositories Repository[]
-  projects     Project[]
-  agents       WorkspaceAgent[]
-  members      WorkspaceMember[]
-  activities   Activity[]
-}
+```typescript
+export const workspaces = sqliteTable('workspaces', {
+  id:          text('id').primaryKey(),         // cuid
+  name:        text('name').notNull(),
+  slug:        text('slug').notNull().unique(), // URL 友好标识
+  description: text('description'),
+  createdAt:   text('created_at').notNull(),    // ISO 8601
+  updatedAt:   text('updated_at').notNull(),
+});
 ```
 
 ### Repository（仓库，关联 GitHub）
 
-```prisma
-model Repository {
-  id            String       @id @default(cuid())
-  workspaceId   String
-  workspace     Workspace    @relation(fields: [workspaceId], references: [id])
-  name          String                          // 如 "frontend"、"backend"
-  provider      GitProvider  @default(GITHUB)
-  remoteUrl     String                          // https://github.com/org/repo.git
-  defaultBranch String       @default("main")
-  webhookSecret String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-
-  issues        GitHubIssue[]
-  pullRequests  PullRequest[]
-  commits       LinkedCommit[]
-
-  @@unique([workspaceId, name])
-}
-
-enum GitProvider {
-  GITHUB
-  GITLAB
-  GITEE
-}
+```typescript
+export const repositories = sqliteTable('repositories', {
+  id:            text('id').primaryKey(),
+  workspaceId:   text('workspace_id').notNull().references(() => workspaces.id),
+  name:          text('name').notNull(),             // "frontend"、"backend"
+  provider:      text('provider').notNull().default('github'),
+  remoteUrl:     text('remote_url').notNull(),       // https://github.com/org/repo.git
+  defaultBranch: text('default_branch').default('main'),
+  webhookSecret: text('webhook_secret'),
+  createdAt:     text('created_at').notNull(),
+  updatedAt:     text('updated_at').notNull(),
+});
 ```
 
-### GitHub Issue（与仓库同步）
+### GitHub Issue / Pull Request / LinkedCommit
 
-```prisma
-model GitHubIssue {
-  id             String     @id @default(cuid())
-  repositoryId   String
-  repository     Repository @relation(fields: [repositoryId], references: [id])
-  issueNumber    Int                            // GitHub Issue Number
-  title          String
-  body           String?
-  state          String     @default("open")    // open / closed
-  labels         String[]                       // GitHub Labels
-  assignees      String[]                       // GitHub 用户名
-  devrelayTaskId String?                        // 关联 DevRelay Task
-  syncedAt       DateTime   @default(now())
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+```typescript
+export const githubIssues = sqliteTable('github_issues', {
+  id:            text('id').primaryKey(),
+  repositoryId:  text('repository_id').notNull().references(() => repositories.id),
+  issueNumber:   integer('issue_number').notNull(),
+  title:         text('title').notNull(),
+  body:          text('body'),
+  state:         text('state').default('open'),      // open / closed
+  labels:        text('labels'),                      // JSON 数组
+  assignees:     text('assignees'),                   // JSON 数组
+  devrelayTaskId: text('devrelay_task_id'),
+  syncedAt:      text('synced_at').notNull(),
+  createdAt:     text('created_at').notNull(),
+  updatedAt:     text('updated_at').notNull(),
+});
 
-  @@unique([repositoryId, issueNumber])
-}
-```
+export const pullRequests = sqliteTable('pull_requests', {
+  id:             text('id').primaryKey(),
+  repositoryId:   text('repository_id').notNull().references(() => repositories.id),
+  prNumber:       integer('pr_number').notNull(),
+  title:          text('title').notNull(),
+  body:           text('body'),
+  state:          text('state').default('open'),      // open / closed / merged
+  sourceBranch:   text('source_branch'),
+  targetBranch:   text('target_branch'),
+  commitSha:      text('commit_sha'),
+  devrelayTaskId:  text('devrelay_task_id'),
+  devrelayStageId: text('devrelay_stage_id'),
+  createdAt:      text('created_at').notNull(),
+  updatedAt:      text('updated_at').notNull(),
+});
 
-### Pull Request
-
-```prisma
-model PullRequest {
-  id             String     @id @default(cuid())
-  repositoryId   String
-  repository     Repository @relation(fields: [repositoryId], references: [id])
-  prNumber       Int                           // GitHub PR Number
-  title          String
-  body           String?
-  state          String     @default("open")   // open / closed / merged
-  sourceBranch   String
-  targetBranch   String
-  commitSha      String?
-  devrelayTaskId  String?                      // 关联 DevRelay Task
-  devrelayStageId String?                      // 关联代码评审阶段
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
-
-  @@unique([repositoryId, prNumber])
-}
-```
-
-### LinkedCommit（关联 Commit）
-
-```prisma
-model LinkedCommit {
-  id           String     @id @default(cuid())
-  repositoryId String
-  repository   Repository @relation(fields: [repositoryId], references: [id])
-  sha          String
-  message      String
-  author       String?
-  branch       String
-  taskId       String?                        // 关联 DevRelay Task
-  projectId    String?                        // 关联 Project
-  createdAt    DateTime   @default(now())
-}
+export const linkedCommits = sqliteTable('linked_commits', {
+  id:           text('id').primaryKey(),
+  repositoryId: text('repository_id').notNull().references(() => repositories.id),
+  sha:          text('sha').notNull(),
+  message:      text('message'),
+  author:       text('author'),
+  branch:       text('branch'),
+  taskId:       text('task_id'),
+  projectId:    text('project_id'),
+  createdAt:    text('created_at').notNull(),
+});
 ```
 
 ### Project（交付项目）
 
-```prisma
-model Project {
-  id           String        @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace     @relation(fields: [workspaceId], references: [id])
-  name         String
-  description  String?
-  customer     String?                          // 客户名称
-  status       ProjectStatus @default(ACTIVE)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+```typescript
+export const projects = sqliteTable('projects', {
+  id:          text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  name:        text('name').notNull(),
+  description: text('description'),
+  customer:    text('customer'),                     // 客户名称
+  status:      text('status').notNull().default('active'), // active / completed / archived
+  createdAt:   text('created_at').notNull(),
+  updatedAt:   text('updated_at').notNull(),
+});
 
-  stages       Stage[]
-  documents    Document[]
-  tasks        Task[]
-  repoLinks    ProjectRepo[]
-  members      ProjectMember[]
-  activities   Activity[]
-}
-
-enum ProjectStatus {
-  ACTIVE
-  COMPLETED
-  ARCHIVED
-}
-```
-
-### ProjectRepo（项目-仓库关联）
-
-```prisma
-model ProjectRepo {
-  id           String     @id @default(cuid())
-  projectId    String
-  project      Project    @relation(fields: [projectId], references: [id])
-  repositoryId String
-  repository   Repository @relation(fields: [repositoryId], references: [id])
-
-  @@unique([projectId, repositoryId])
-}
+export const projectRepos = sqliteTable('project_repos', {
+  id:           text('id').primaryKey(),
+  projectId:    text('project_id').notNull().references(() => projects.id),
+  repositoryId: text('repository_id').notNull().references(() => repositories.id),
+});
 ```
 
 ### Stage / Document / Task
 
-```prisma
-model Stage {
-  id          String      @id @default(cuid())
-  projectId   String
-  project     Project     @relation(fields: [projectId], references: [id])
-  step        Int
-  name        String
-  status      StageStatus @default(PENDING)
-  assignedTo  String?                        // 负责角色
-  reviewNotes String?
-  startedAt   DateTime?
-  completedAt DateTime?
+```typescript
+export const stages = sqliteTable('stages', {
+  id:          text('id').primaryKey(),
+  projectId:   text('project_id').notNull().references(() => projects.id),
+  step:        integer('step').notNull(),             // 1-13
+  name:        text('name').notNull(),
+  status:      text('status').notNull().default('pending'), // pending / in_progress / completed / rejected
+  assignedTo:  text('assigned_to'),                  // 负责角色
+  reviewNotes: text('review_notes'),
+  startedAt:   text('started_at'),
+  completedAt: text('completed_at'),
+});
 
-  @@unique([projectId, step])
-}
+// 文档元数据存 SQLite，内容存 .md 文件
+export const documents = sqliteTable('documents', {
+  id:          text('id').primaryKey(),
+  projectId:   text('project_id').notNull().references(() => projects.id),
+  type:        text('type').notNull(),               // prd / prototype / tech_design / ...
+  title:       text('title').notNull(),
+  filePath:    text('file_path').notNull(),           // 相对路径，如 "projects/{id}/docs/prd-v1.md"
+  version:     integer('version').default(1),
+  createdBy:   text('created_by'),
+  stageId:     text('stage_id'),
+  createdAt:   text('created_at').notNull(),
+  updatedAt:   text('updated_at').notNull(),
+});
 
-model Document {
-  id          String       @id @default(cuid())
-  projectId   String
-  project     Project      @relation(fields: [projectId], references: [id])
-  type        DocumentType
-  title       String
-  content     String                          // Markdown
-  version     Int          @default(1)
-  createdBy   String
-  stageId     String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-}
-
-model Task {
-  id            String     @id @default(cuid())
-  projectId     String
-  project       Project    @relation(fields: [projectId], references: [id])
-  title         String
-  description   String?
-  status        TaskStatus @default(TODO)
-  priority      Priority   @default(MEDIUM)
-  assignedTo    String?
-  stageId       String?
-  agentId       String?                       // 使用的 Agent
-  repositoryId  String?                       // 关联的仓库
-  gitBranch     String?
-  gitCommitSha  String?
-  githubIssueId String?                       // 关联的 GitHub Issue ID
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-}
+export const tasks = sqliteTable('tasks', {
+  id:            text('id').primaryKey(),
+  projectId:     text('project_id').notNull().references(() => projects.id),
+  title:         text('title').notNull(),
+  description:   text('description'),
+  status:        text('status').notNull().default('todo'), // todo / in_progress / in_review / done
+  priority:      text('priority').default('medium'),       // low / medium / high / critical
+  assignedTo:    text('assigned_to'),
+  stageId:       text('stage_id'),
+  agentId:       text('agent_id'),
+  repositoryId:  text('repository_id'),
+  gitBranch:     text('git_branch'),
+  gitCommitSha:  text('git_commit_sha'),
+  githubIssueId: text('github_issue_id'),
+  createdAt:     text('created_at').notNull(),
+  updatedAt:     text('updated_at').notNull(),
+});
 ```
 
 ### Agent 模型（共享/独享）
 
-```prisma
-model WorkspaceAgent {
-  id          String      @id @default(cuid())
-  workspaceId String
-  workspace   Workspace   @relation(fields: [workspaceId], references: [id])
-  type        AgentType
-  name        String
-  apiEndpoint String
-  apiKey      String                          // 加密存储
-  enabled     Boolean     @default(true)
-  scope       AgentScope  @default(SHARED)    // 共享 or 独享
-  config      Json?                           // Agent特定配置
-  createdAt   DateTime    @default(now())
+```typescript
+export const workspaceAgents = sqliteTable('workspace_agents', {
+  id:          text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  type:        text('type').notNull(),               // claude_code / codex / hermes / openclaw / custom
+  name:        text('name').notNull(),
+  apiEndpoint: text('api_endpoint'),
+  apiKey:      text('api_key'),                      // 加密存储
+  enabled:     integer('enabled', { mode: 'boolean' }).default(true),
+  scope:       text('scope').notNull().default('shared'), // shared / dedicated
+  config:      text('config'),                       // JSON
+  createdAt:   text('created_at').notNull(),
+});
 
-  projectAssignments AgentProjectAssignment[]
-}
-
-enum AgentType {
-  CLAUDE_CODE
-  CODEX
-  HERMES
-  OPENCLAW
-  CUSTOM
-}
-
-enum AgentScope {
-  SHARED                                      // 空间内所有项目可用
-  DEDICATED                                   // 仅指定项目可用
-}
-
-model AgentProjectAssignment {
-  id        String         @id @default(cuid())
-  agentId   String
-  agent     WorkspaceAgent @relation(fields: [agentId], references: [id])
-  projectId String
-  project   Project        @relation(fields: [projectId], references: [id])
-
-  @@unique([agentId, projectId])
-}
+export const agentProjectAssignments = sqliteTable('agent_project_assignments', {
+  id:        text('id').primaryKey(),
+  agentId:   text('agent_id').notNull().references(() => workspaceAgents.id),
+  projectId: text('project_id').notNull().references(() => projects.id),
+});
 ```
 
 ### 成员模型
 
-```prisma
-model WorkspaceMember {
-  id          String   @id @default(cuid())
-  workspaceId String
-  userId      String
-  role        Role
-  joinedAt    DateTime @default(now())
+```typescript
+export const workspaceMembers = sqliteTable('workspace_members', {
+  id:          text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  userId:      text('user_id').notNull(),
+  role:        text('role').notNull(),               // pm / architect / developer / qa / delivery_manager / admin
+  joinedAt:    text('joined_at').notNull(),
+});
 
-  @@unique([workspaceId, userId])
-}
-
-model ProjectMember {
-  id        String   @id @default(cuid())
-  projectId String
-  userId    String
-  role      Role
-  joinedAt  DateTime @default(now())
-
-  @@unique([projectId, userId])
-}
-
-enum Role {
-  PM
-  ARCHITECT
-  DEVELOPER
-  QA
-  DELIVERY_MANAGER
-  ADMIN
-}
+export const projectMembers = sqliteTable('project_members', {
+  id:        text('id').primaryKey(),
+  projectId: text('project_id').notNull().references(() => projects.id),
+  userId:    text('user_id').notNull(),
+  role:      text('role').notNull(),
+  joinedAt:  text('joined_at').notNull(),
+});
 ```
 
 ### Activity（操作日志）
 
-```prisma
-model Activity {
-  id          String   @id @default(cuid())
-  workspaceId String?
-  projectId   String?
-  actorId     String
-  actorName   String
-  action      String                           // "stage.approved" / "pr.opened" / "issue.linked"
-  target      String?
-  metadata    Json?
-  createdAt   DateTime @default(now())
+```typescript
+export const activities = sqliteTable('activities', {
+  id:          text('id').primaryKey(),
+  workspaceId: text('workspace_id'),
+  projectId:   text('project_id'),
+  actorId:     text('actor_id').notNull(),
+  actorName:   text('actor_name'),
+  action:      text('action').notNull(),             // "stage.approved" / "pr.opened" / ...
+  target:      text('target'),
+  metadata:    text('metadata'),                      // JSON
+  createdAt:   text('created_at').notNull(),
+});
+```
+
+## 文档存储方案（.md 文件）
+
+### 设计原则
+
+文档内容（PRD、技术方案、评审报告等）**不存数据库**，而是保存为 Markdown 文件。数据库只存元数据（标题、类型、文件路径、版本等）。
+
+### 文件系统布局
+
+```
+data/
+├── {workspace-slug}/                        # 空间目录
+│   ├── projects/
+│   │   └── {project-id}/                    # 项目目录
+│   │       ├── docs/                        # 文档文件
+│   │       │   ├── 01-prd-v1.md             # PRD 初版
+│   │       │   ├── 01-prd-v2.md             # PRD 修改版
+│   │       │   ├── 02-prototype-v1.md        # 原型描述
+│   │       │   ├── 03-tech-design-v1.md      # 技术方案
+│   │       │   ├── 04-code-review-report-v1.md
+│   │       │   ├── 05-test-plan-v1.md
+│   │       │   ├── 06-test-report-v1.md
+│   │       │   └── 07-acceptance-report-v1.md
+│   │       └── tasks/                       # 任务附件
+│   │           └── {task-id}/
+│   │               └── notes.md
+│   └── config/                              # 空间配置
+│       ├── settings.json
+│       └── agents.json
+└── devrelay.db                               # SQLite 数据库文件
+```
+
+### 文档版本管理
+
+```typescript
+// 版本策略：不覆盖旧文件，新建文件保留历史
+// 命名规则：{step}-{type}-v{version}.md
+// 例如：01-prd-v1.md → 01-prd-v2.md（驳回后修改重新生成）
+
+interface DocFile {
+  path: string;          // 相对路径
+  version: number;
+  createdAt: Date;
+}
+
+// 读最新版本
+async function getLatestDoc(projectId: string, type: string): Promise<string> {
+  const doc = await db.query.documents.findFirst({
+    where: and(eq(documents.projectId, projectId), eq(documents.type, type)),
+    orderBy: desc(documents.version),
+  });
+  if (!doc) return '';
+  return fs.readFile(path.join(DATA_DIR, doc.filePath), 'utf-8');
+}
+
+// 写新版本
+async function saveDocVersion(projectId: string, type: string, content: string, author: string) {
+  const latest = await getLatestDocMeta(projectId, type);
+  const newVersion = (latest?.version ?? 0) + 1;
+  const fileName = `${String(s.step).padStart(2, '0')}-${type}-v${newVersion}.md`;
+  const filePath = `projects/${projectId}/docs/${fileName}`;
+  const fullPath = path.join(DATA_DIR, filePath);
+  await fs.mkdir(path.dirname(fullPath), { recursive: true });
+  await fs.writeFile(fullPath, content, 'utf-8');
+
+  return db.insert(documents).values({
+    id: cuid(),
+    projectId,
+    type,
+    title: `${type} v${newVersion}`,
+    filePath,
+    version: newVersion,
+    createdBy: author,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
 }
 ```
+
+### 优势
+
+| 项目 | 说明 |
+|------|------|
+| **体积小** | 纯文本，整个项目文档可能就几百 KB |
+| **Git 友好** | `.md` 文件天然可 diff、可 code review |
+| **可外部编辑** | 用户可以直接用 VS Code / Obsidian 打开编辑 |
+| **AI 友好** | Agent 可以直接流式写入 .md 文件 |
+| **备份简单** | 整个 `data/` 目录打包即备份 |
 
 ## GitHub 集成方案
 
@@ -544,10 +541,11 @@ GET    /api/projects/:id/activities      # 项目活动
 
 ### Phase 1：基础框架（Week 1-2）
 - [ ] 初始化 Next.js 项目 + TypeScript + Tailwind
-- [ ] 搭建 Prisma schema + PostgreSQL
-- [ ] NextAuth.js 认证 + RBAC
-- [ ] 基础 UI 框架（布局、导航）
-- [ ] Docker Compose 开发环境
+- [ ] Drizzle ORM + SQLite schema（所有表）
+- [ ] data/ 目录结构 + .md 文件读写
+- [ ] NextAuth.js + SQLite 适配 + RBAC
+- [ ] 基础 UI 框架（布局、导航、空间列表页）
+- [ ] 开发环境一键启动（`npm run dev`）
 
 ### Phase 2：空间 + 仓库管理（Week 3-4）
 - [ ] Workspace CRUD
@@ -565,7 +563,8 @@ GET    /api/projects/:id/activities      # 项目活动
 - [ ] 活动日志
 
 ### Phase 4：文档 + 任务管理（Week 7-8）
-- [ ] 文档 CRUD（Markdown 编辑器）
+- [ ] .md 文档 CRUD（Markdown 编辑器 + 文件读写）
+- [ ] 文档版本管理（v1 → v2 → ...）
 - [ ] 任务 CRUD + 看板视图
 - [ ] Task ↔ GitHub Issue 双向关联
 - [ ] Commit ↔ Task 自动关联（Webhook）
@@ -576,7 +575,7 @@ GET    /api/projects/:id/activities      # 项目活动
 - [ ] Claude Code 适配器
 - [ ] Codex 适配器
 - [ ] Hermes 适配器
-- [ ] Agent 任务调度（BullMQ）
+- [ ] Agent 任务调度（内置 SQLite 队列）
 
 ### Phase 6：评审 + PR 联动（Week 12-13）
 - [ ] 评审流程（提交→审批→驳回）
@@ -588,12 +587,19 @@ GET    /api/projects/:id/activities      # 项目活动
 - [ ] 部署状态追踪
 - [ ] 客户验收流程
 - [ ] 监控反馈闭环
-- [ ] E2E 测试 + 部署上线
+- [ ] E2E 测试 + 生产部署
+- [ ] 单容器 Docker 打包
 
 ## 目录结构
 
 ```
 devrelay/
+├── data/                             # 运行时数据目录（all in one 核心）
+│   ├── devrelay.db                   # SQLite 数据库（单文件）
+│   └── {workspace-slug}/             # 空间数据目录
+│       ├── projects/{id}/docs/       # .md 文档文件
+│       ├── projects/{id}/tasks/      # 任务附件
+│       └── config/                   # 空间配置 (settings.json, agents.json)
 ├── src/
 │   ├── app/                          # Next.js App Router
 │   │   ├── layout.tsx
@@ -609,7 +615,7 @@ devrelay/
 │   │               └── [id]/
 │   │                   ├── page.tsx  # 流程看板
 │   │                   ├── stages/   # 阶段详情
-│   │                   ├── documents/# 文档中心
+│   │                   ├── documents/# 文档中心（md编辑器）
 │   │                   ├── tasks/    # 任务看板 + GitHub联动
 │   │                   ├── agents/   # 项目Agent
 │   │                   └── settings/ # 项目设置
@@ -617,33 +623,29 @@ devrelay/
 │   │   ├── ui/                       # 通用UI组件
 │   │   ├── workspace/                # 空间相关组件
 │   │   ├── workflow/                 # 流程看板组件
-│   │   ├── documents/                # 文档编辑器组件
+│   │   ├── documents/                # Markdown编辑器组件
 │   │   ├── tasks/                    # 任务组件
 │   │   ├── github/                   # GitHub联动组件
 │   │   └── agents/                   # Agent配置组件
 │   ├── lib/
-│   │   ├── db/                       # Prisma client
+│   │   ├── db/                       # Drizzle schema + client
 │   │   ├── auth/                     # 认证逻辑
 │   │   ├── workflow/                 # 流程引擎
+│   │   ├── docs/                     # .md 文件读写服务
 │   │   ├── github/                   # GitHub集成（Octokit + Webhook）
-│   │   ├── agents/                   # Agent适配器
+│   │   ├── agents/                   # Agent适配器 + 内置任务队列
 │   │   └── api/                      # tRPC routers
 │   ├── server/
 │   │   ├── routers/                  # tRPC路由
 │   │   ├── webhooks/                 # Webhook处理
 │   │   └── middleware/               # 服务端中间件
 │   └── types/                        # 类型定义
-├── prisma/
-│   └── schema.prisma
-├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml
 ├── public/
 ├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── e2e/
-└── docs/
+├── drizzle.config.ts                 # Drizzle 配置
+├── next.config.js
+├── package.json
+└── Dockerfile                        # 单容器（仅 Node.js + data/ 挂载）
 ```
 
 ## AI Agent 使用策略（本项目自身开发）
