@@ -121,7 +121,9 @@ export const repositories = sqliteTable('repositories', {
   name:          text('name').notNull(),             // "frontend"、"backend"
   provider:      text('provider').notNull().default('github'),
   remoteUrl:     text('remote_url').notNull(),       // https://github.com/org/repo.git
-  token:         text('token'),                     // GitHub PAT（加密存储）
+  accessToken:   text('access_token'),              // OAuth 获取的 token（加密存储）
+  tokenExpiresAt:text('token_expires_at'),           // token 过期时间
+  refreshToken:  text('refresh_token'),              // 刷新 token
   defaultBranch: text('default_branch').default('main'),
   webhookSecret: text('webhook_secret'),
   createdAt:     text('created_at').notNull(),
@@ -410,7 +412,7 @@ Label / Milestone ◄─────────── Stage / Priority
 
 | 功能 | 说明 |
 |------|------|
-| **Token 认证** | 用户在仓库设置页面填写 GitHub Personal Access Token，加密存储到 SQLite |
+| **OAuth 认证** | GitHub OAuth App 授权，获取 `repo` + `webhook` scope，token 加密存储，支持 refresh |
 | **Issue 同步** | DevRelay 创建 Task → 自动生成 GitHub Issue；GitHub Issue → Webhook → DevRelay Task |
 | **PR 关联** | 开发提交 PR → Webhook 触发 → 自动关联到代码评审阶段（Stage 8） |
 | **Commit 追踪** | Push 事件 → 解析 issue/PR 引用 → 自动关联 Commit 到 Task |
@@ -552,7 +554,7 @@ GET    /api/projects/:id/activities      # 项目活动
 ### Phase 2：空间 + 仓库管理（Week 3-4）
 - [ ] Workspace CRUD
 - [ ] Repository 绑定/解绑
-- [ ] GitHub Token 配置（加密存储 + Octokit 初始化）
+- [ ] GitHub OAuth App 注册 + 授权流程（scope: repo, workflow, webhook）
 - [ ] GitHub Webhook 接收 + 解析
 - [ ] Issue 列表/详情（从 GitHub 同步）
 
