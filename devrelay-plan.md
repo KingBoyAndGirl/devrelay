@@ -402,24 +402,24 @@ export const tasks = sqliteTable('tasks', {
 });
 ```
 
-### Agent 模型（归属于用户，分配给自己的空间）
+### Agent 模型（空间内创建，成员共享）
 
 ```typescript
 export const agents = sqliteTable('agents', {
-  id:          text('id').primaryKey(),
-  createdBy:   text('created_by').notNull().references(() => users.id),  // 所有者
-  workspaceId: text('workspace_id'),                     // 分配的空间（空=个人池，所有空间可用）
-  type:        text('type').notNull(),                   // claude_code / codex / hermes / openclaw / custom
-  name:        text('name').notNull(),
-  execPath:    text('exec_path'),                        // CLI 可执行文件路径
-  argsTemplate: text('args_template'),                   // 参数模板 '-p "{prompt}"'
-  envVars:     text('env_vars'),                         // 环境变量 JSON
-  enabled:     integer('enabled', { mode: 'boolean' }).default(true),
-  config:      text('config'),                           // JSON 扩展配置
-  createdAt:   text('created_at').notNull(),
+  id:           text('id').primaryKey(),
+  workspaceId:  text('workspace_id').notNull().references(() => workspaces.id),  // 所属空间
+  createdBy:    text('created_by').notNull().references(() => users.id),          // 创建者
+  type:         text('type').notNull(),                   // claude_code / codex / hermes / openclaw / custom
+  name:         text('name').notNull(),
+  execPath:     text('exec_path'),                        // CLI 可执行文件路径
+  argsTemplate: text('args_template'),                   // 参数模板
+  envVars:      text('env_vars'),                         // 环境变量 JSON
+  enabled:      integer('enabled', { mode: 'boolean' }).default(true),
+  config:       text('config'),                           // JSON 扩展配置
+  createdAt:    text('created_at').notNull(),
 });
 
-// Agent 到特定项目绑定（可进一步限定到某 Project）
+// 可选：限定 Agent 仅用于空间内某些项目
 export const agentProjects = sqliteTable('agent_projects', {
   id:        text('id').primaryKey(),
   agentId:   text('agent_id').notNull().references(() => agents.id),
@@ -590,39 +590,20 @@ const GITHUB_EVENTS = {
 }
 ```
 
-## Agent 归属与分配策略
-
-### 归属：用户级别
+## Agent 归属与使用
 
 ```
-用户 A 创建的 Agent ──→ 分配给 A 创建的空间「电商」
-                          │
-                          ├── A（创建者）：可用 + 可编辑/删除 Agent
-                          ├── B（被邀请成员）：可用（执行任务时可选此 Agent）
-                          └── C（被邀请成员）：可用
-
-用户 A 创建的 Agent ──→ ❌ 不能分配给 B 创建的空间「SaaS」
+空间「电商」(A 创建，B 被邀请)
+  │
+  ├── Agent「Claude Code」(A 创建)  → A 可编辑/删除，B 可使用
+  ├── Agent「Codex」(A 创建)       → A 可编辑/删除，B 可使用
+  └── Agent「专用审查」(B 创建)     → B 可编辑/删除，A 可使用
 ```
 
-- Agent 属于创建它的**用户**（`createdBy`），只有创建者可以**编辑/删除/分配空间**
-- Agent 分配给空间后，**该空间所有成员皆可使用**
-- Agent **只能分配给创建者拥有的空间**，不能跨用户分配
-
-### 分配粒度
-
-| 分配方式 | 可见范围 | 适用场景 |
-|---------|---------|---------|
-| 个人池（workspaceId = null） | 该用户所有空间的所有项目 | 通用 Agent，如 Claude Code 到处用 |
-| 分配到空间（workspaceId = X） | 该空间下所有项目 | 给某个产品线配置的专用 Agent |
-| 分配到项目（agentProjects 表） | 仅该项目 | 客户定制场景，Agent 只用于特定交付 |
-
-### Agent 选择优先级
-
-```
-Task 执行 → 先查 agentProjects（项目绑定）
-         → 再查 agents（空间分配 + 个人池）
-         → 仅返回 currentUser.createdBy 的 Agent
-```
+- 用户在**空间内**创建 Agent，自动属于该空间
+- 空间内**所有成员**都可以在任务中使用该 Agent
+- 只有**创建者**可以编辑/删除自己的 Agent
+- 可选：通过 `agentProjects` 表将 Agent 限定到空间内特定项目
 
 ## API 设计概览
 
