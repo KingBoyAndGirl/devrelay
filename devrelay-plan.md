@@ -402,25 +402,27 @@ export const tasks = sqliteTable('tasks', {
 });
 ```
 
-### Agent 模型（共享/独享）
+### Agent 模型（归属于用户，分配给自己的空间）
 
 ```typescript
-export const workspaceAgents = sqliteTable('workspace_agents', {
+export const agents = sqliteTable('agents', {
   id:          text('id').primaryKey(),
-  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
-  type:        text('type').notNull(),               // claude_code / codex / hermes / openclaw / custom
+  createdBy:   text('created_by').notNull().references(() => users.id),  // 所有者
+  workspaceId: text('workspace_id'),                     // 分配的空间（空=个人池，所有空间可用）
+  type:        text('type').notNull(),                   // claude_code / codex / hermes / openclaw / custom
   name:        text('name').notNull(),
-  apiEndpoint: text('api_endpoint'),
-  apiKey:      text('api_key'),                      // 加密存储
+  execPath:    text('exec_path'),                        // CLI 可执行文件路径
+  argsTemplate: text('args_template'),                   // 参数模板 '-p "{prompt}"'
+  envVars:     text('env_vars'),                         // 环境变量 JSON
   enabled:     integer('enabled', { mode: 'boolean' }).default(true),
-  scope:       text('scope').notNull().default('shared'), // shared / dedicated
-  config:      text('config'),                       // JSON
+  config:      text('config'),                           // JSON 扩展配置
   createdAt:   text('created_at').notNull(),
 });
 
-export const agentProjectAssignments = sqliteTable('agent_project_assignments', {
+// Agent 到特定项目绑定（可进一步限定到某 Project）
+export const agentProjects = sqliteTable('agent_projects', {
   id:        text('id').primaryKey(),
-  agentId:   text('agent_id').notNull().references(() => workspaceAgents.id),
+  agentId:   text('agent_id').notNull().references(() => agents.id),
   projectId: text('project_id').notNull().references(() => projects.id),
 });
 ```
@@ -588,22 +590,37 @@ const GITHUB_EVENTS = {
 }
 ```
 
-## Agent 共享与独享策略
+## Agent 归属与分配策略
 
-### 共享 Agent（Workspace 级别）
-- 在 Workspace 下注册一次，**所有 Project** 均可调用
-- 适合：通用 Agent（需求分析、代码审查、文档生成）
-- 示例：Workspace「电商平台」注册一个 Claude Code，前后端 Project 共用
+### 归属：用户级别
 
-### 独享 Agent（Project 级别）
-- 绑定到 **特定 Project**，其他 Project 不可见
-- 适合：客户特定的 Agent 实例、独立配置、安全隔离
-- 示例：Project「客户A 定制交付」绑定专用 Codex 实例
+```
+用户 A 创建的 Agent       用户 B 创建的 Agent
+      │                         │
+      ├── 空间「电商」(A创建)    ├── 空间「SaaS」(B创建)
+      ├── 空间「数据」(A创建)    └── 空间「工具」(B创建)
+      └── 个人池（空 workspaceId）
+```
+
+- Agent 属于创建它的**用户**，只有创建者可以编辑/删除
+- Agent 可分配给该用户创建的**任意空间**（`workspaceId`）
+- `workspaceId` 为空 → 该用户的「个人池」，对该用户所有空间可见
+- **其他用户不可见此 Agent**，即使在同一空间的成员也无法使用
+
+### 分配粒度
+
+| 分配方式 | 可见范围 | 适用场景 |
+|---------|---------|---------|
+| 个人池（workspaceId = null） | 该用户所有空间的所有项目 | 通用 Agent，如 Claude Code 到处用 |
+| 分配到空间（workspaceId = X） | 该空间下所有项目 | 给某个产品线配置的专用 Agent |
+| 分配到项目（agentProjects 表） | 仅该项目 | 客户定制场景，Agent 只用于特定交付 |
 
 ### Agent 选择优先级
 
 ```
-Task 执行 → 先查 Project 独享 Agent → 无则使用 Workspace 共享 Agent → 无则提示配置
+Task 执行 → 先查 agentProjects（项目绑定）
+         → 再查 agents（空间分配 + 个人池）
+         → 仅返回 currentUser.createdBy 的 Agent
 ```
 
 ## API 设计概览
