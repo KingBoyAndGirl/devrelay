@@ -4,7 +4,7 @@
   "description": "DevRelay Agent — AI CLI execution sidecar. Runs on your host machine to execute Claude Code, Codex, and other AI CLIs.",
   "license": "AGPL-3.0",
   "bin": {
-    "devrelay-agent": "index.ts"
+    "devrelay": "index.ts"
   },
   "scripts": {
     "start": "tsx index.ts"

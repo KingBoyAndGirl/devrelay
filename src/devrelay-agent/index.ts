@@ -5,12 +5,12 @@
  * Host-side process that manages AI CLI execution for DevRelay.
  *
  * Usage:
- *   devrelay-agent                     Start the agent server (default)
- *   devrelay-agent configure           Interactive setup (token, URL)
- *   devrelay-agent configure --token X --url Y
- *   devrelay-agent start               Same as no args
- *   devrelay-agent status              Show config & health
- *   devrelay-agent test                Test connection to DevRelay server
+ *   devrelay                     Start the agent server (default)
+ *   devrelay configure           Interactive setup (token, URL)
+ *   devrelay configure --token X --url Y
+ *   devrelay start               Same as no args
+ *   devrelay status              Show config & health
+ *   devrelay test                Test connection to DevRelay server
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
@@ -98,7 +98,7 @@ async function cmdConfigure(flags: Record<string, string>) {
     if (flags.url) config.serverUrl = flags.url;
     if (flags.port) config.port = parseInt(flags.port, 10);
     saveConfig(config);
-    console.log('[devrelay-agent] Configuration saved to', CONFIG_FILE);
+    console.log('[devrelay] Configuration saved to', CONFIG_FILE);
     if (config.token) console.log('  Token:    ' + config.token.slice(0, 8) + '...');
     if (config.serverUrl) console.log('  Server:   ' + config.serverUrl);
     if (config.port) console.log('  Port:     ' + config.port);
@@ -122,7 +122,7 @@ async function cmdConfigure(flags: Record<string, string>) {
   saveConfig(config);
 
   console.log('\n  Configuration saved to', CONFIG_FILE);
-  console.log('  Start the agent with: devrelay-agent start\n');
+  console.log('  Start the agent with: devrelay start\n');
 }
 
 function cmdStatus() {
@@ -166,16 +166,16 @@ async function cmdTest() {
   const config = resolveConfig();
 
   if (!config.serverUrl) {
-    console.error('[devrelay-agent] No server URL configured. Run: devrelay-agent configure');
+    console.error('[devrelay] No server URL configured. Run: devrelay configure');
     process.exit(1);
   }
 
   if (!config.token) {
-    console.error('[devrelay-agent] No token configured. Run: devrelay-agent configure');
+    console.error('[devrelay] No token configured. Run: devrelay configure');
     process.exit(1);
   }
 
-  console.log(`[devrelay-agent] Testing connection to ${config.serverUrl}...`);
+  console.log(`[devrelay] Testing connection to ${config.serverUrl}...`);
 
   try {
     const res = await fetch(`${config.serverUrl}/api/agent/verify`, {
@@ -185,14 +185,14 @@ async function cmdTest() {
 
     if (res.ok) {
       const data = await res.json();
-      console.log('[devrelay-agent] Connection successful');
+      console.log('[devrelay] Connection successful');
       console.log(`  Server responded: HTTP ${res.status}`);
       if (data.workspace) {
         console.log(`  Workspace:    ${data.workspace.name} (${data.workspace.slug})`);
       }
     } else {
       const data = await res.json().catch(() => ({}));
-      console.log(`[devrelay-agent] Server responded: HTTP ${res.status}`);
+      console.log(`[devrelay] Server responded: HTTP ${res.status}`);
       if (res.status === 401) {
         console.log('  Token is invalid. Generate a new one in the workspace settings page.');
       } else {
@@ -200,7 +200,7 @@ async function cmdTest() {
       }
     }
   } catch (err: any) {
-    console.error(`[devrelay-agent] Connection failed: ${err.message}`);
+    console.error(`[devrelay] Connection failed: ${err.message}`);
     console.log('  Check that the DevRelay server is running and accessible.');
   }
 }
@@ -210,7 +210,7 @@ function cmdHelp() {
   DevRelay Agent — AI CLI execution sidecar
 
   Usage:
-    devrelay-agent [command] [options]
+    devrelay [command] [options]
 
   Commands:
     start               Start the agent server (default)
@@ -225,9 +225,9 @@ function cmdHelp() {
     --port <number>     Agent listening port (default: 4100)
 
   Examples:
-    devrelay-agent configure --token abc123 --url https://devrelay.example.com
-    devrelay-agent start
-    devrelay-agent status
+    devrelay configure --token abc123 --url https://devrelay.example.com
+    devrelay start
+    devrelay status
 
   Config file: ~/.devrelay/agent.json
   Environment variables (override config file):
@@ -513,7 +513,7 @@ function startServer(flags: Record<string, string> = {}) {
 
   // ── MCP ──────────────────────────────────────────────────────
 
-  const SERVER_NAME = 'devrelay-agent';
+  const SERVER_NAME = 'devrelay';
   const SERVER_VERSION = '1.0.0';
 
   const MCP_TOOLS = [
@@ -702,16 +702,16 @@ function startServer(flags: Record<string, string> = {}) {
   server.listen(PORT, () => {
     const clis = discoverCLIs();
     const found = clis.filter((c) => c.found);
-    console.log(`\n[devrelay-agent] ========================================`);
-    console.log(`[devrelay-agent]  Listening   http://localhost:${PORT}`);
-    console.log(`[devrelay-agent]  Auth:       ${AUTH_TOKEN ? 'ENABLED' : 'DISABLED'}`);
-    console.log(`[devrelay-agent]  Config:     ${CONFIG_FILE}`);
-    console.log(`[devrelay-agent]  CLIs:       ${found.map(c => c.bin).join(', ') || 'none detected'}`);
-    console.log(`[devrelay-agent] ========================================\n`);
+    console.log(`\n[devrelay] ========================================`);
+    console.log(`[devrelay]  Listening   http://localhost:${PORT}`);
+    console.log(`[devrelay]  Auth:       ${AUTH_TOKEN ? 'ENABLED' : 'DISABLED'}`);
+    console.log(`[devrelay]  Config:     ${CONFIG_FILE}`);
+    console.log(`[devrelay]  CLIs:       ${found.map(c => c.bin).join(', ') || 'none detected'}`);
+    console.log(`[devrelay] ========================================\n`);
   });
 
   process.on('SIGTERM', () => {
-    console.log('[devrelay-agent] shutting down...');
+    console.log('[devrelay] shutting down...');
     executions.forEach((exec) => exec.process.kill('SIGTERM'));
     server.close();
     process.exit(0);

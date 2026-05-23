@@ -45,7 +45,7 @@ install_agent() {
     warn "Global install failed, trying with sudo..."
     sudo npm install -g devrelay-agent
   }
-  info "devrelay-agent installed ✓"
+  info "devrelay installed ✓"
 }
 
 # ── Detect AI CLIs ───────────────────────────────────────────────
@@ -76,7 +76,7 @@ detect_clis() {
 # ── Generate auth token ──────────────────────────────────────────
 
 generate_token() {
-  local token_file="$HOME/.devrelay-agent-token"
+  local token_file="$HOME/.devrelay-token"
   if [ -f "$token_file" ]; then
     AGENT_TOKEN=$(cat "$token_file")
     info "Using existing token from $token_file"
@@ -107,14 +107,14 @@ setup_systemd() {
 
   read -rp "$(echo -e "${BOLD}Install as systemd service? [y/N]: ${NC}")" answer
   if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-    info "Skipped. Start manually with: DEVRELAY_AGENT_TOKEN=\$AGENT_TOKEN devrelay-agent"
+    info "Skipped. Start manually with: DEVRELAY_AGENT_TOKEN=\$AGENT_TOKEN devrelay"
     return
   fi
 
   local agent_bin
-  agent_bin=$(command -v devrelay-agent)
+  agent_bin=$(command -v devrelay)
 
-  sudo tee /etc/systemd/system/devrelay-agent.service > /dev/null <<EOF
+  sudo tee /etc/systemd/system/devrelay.service > /dev/null <<EOF
 [Unit]
 Description=DevRelay Agent — AI CLI execution sidecar
 After=network.target
@@ -133,12 +133,12 @@ WantedBy=multi-user.target
 EOF
 
   sudo systemctl daemon-reload
-  sudo systemctl enable devrelay-agent
-  sudo systemctl start devrelay-agent
+  sudo systemctl enable devrelay
+  sudo systemctl start devrelay
 
-  info "devrelay-agent service installed and started ✓"
-  echo -e "  Check status: ${BOLD}systemctl status devrelay-agent${NC}"
-  echo -e "  View logs:    ${BOLD}journalctl -u devrelay-agent -f${NC}"
+  info "devrelay service installed and started ✓"
+  echo -e "  Check status: ${BOLD}systemctl status devrelay${NC}"
+  echo -e "  View logs:    ${BOLD}journalctl -u devrelay -f${NC}"
 }
 
 # ── Print summary ────────────────────────────────────────────────
@@ -149,7 +149,7 @@ print_summary() {
   echo -e "${GREEN}  DevRelay Agent installed successfully!${NC}"
   echo -e "${BOLD}══════════════════════════════════════════════${NC}"
   echo ""
-  echo -e "  Start:        ${BOLD}devrelay-agent${NC}"
+  echo -e "  Start:        ${BOLD}devrelay${NC}"
   echo -e "  Health check: ${BOLD}curl http://localhost:4100/health${NC}"
   echo -e "  Discover CLIs:${BOLD}curl http://localhost:4100/discover${NC}"
   echo ""
