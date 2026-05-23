@@ -61,6 +61,7 @@ export default function WorkspaceSettingsPage() {
   const [newToken, setNewToken] = useState<{ id: string; name: string; token: string } | null>(null);
   const [newTokenName, setNewTokenName] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [fullTokens, setFullTokens] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadWorkspace();
@@ -161,6 +162,7 @@ export default function WorkspaceSettingsPage() {
     if (res.ok) {
       const data = await res.json();
       setNewToken({ id: data.id, name: data.name, token: data.token });
+      setFullTokens(prev => ({ ...prev, [data.id]: data.token }));
       setShowCreateForm(false);
       setNewTokenName('');
       loadTokens();
@@ -172,6 +174,7 @@ export default function WorkspaceSettingsPage() {
     if (!confirm(`撤销令牌 "${name}" 后，对应的 Agent 将无法连接。确定继续？`)) return;
     setTokenLoading(true);
     await fetch(`/api/workspaces/${slug}/agent-token?id=${id}`, { method: 'DELETE' });
+    setFullTokens(prev => { const next = { ...prev }; delete next[id]; return next; });
     loadTokens();
     setTokenLoading(false);
   }
@@ -399,13 +402,24 @@ export default function WorkspaceSettingsPage() {
                       </div>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleRevokeToken(t.id, t.name)}
-                    disabled={tokenLoading}
-                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50 shrink-0"
-                  >
-                    撤销
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {fullTokens[t.id] && (
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(`devrelay configure --token ${fullTokens[t.id]} --url ${window.location.origin}`); }}
+                        className="text-xs text-blue-500 hover:text-blue-700"
+                        title="复制配置命令"
+                      >
+                        复制
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleRevokeToken(t.id, t.name)}
+                      disabled={tokenLoading}
+                      className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+                    >
+                      撤销
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
