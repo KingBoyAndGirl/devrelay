@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import NotificationBell from '@/components/notifications/NotificationBell';
+import DeleteWorkspaceButton from '@/components/workspaces/DeleteWorkspaceButton';
 
 export default async function HomePage() {
   const session = await auth();
@@ -50,23 +51,25 @@ export default async function HomePage() {
         ) : (
           <div className="grid gap-4">
             {memberships.map((m) => (
-              <Link
-                key={m.workspace!.id}
-                href={`/workspaces/${m.workspace!.slug}`}
-                className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-semibold text-lg">{m.workspace!.name}</h3>
-                    {m.workspace!.description && (
-                      <p className="text-sm text-gray-500 mt-1">{m.workspace!.description}</p>
-                    )}
-                  </div>
+              <div key={m.workspace!.id} className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow flex items-center justify-between gap-4">
+                <Link
+                  href={`/workspaces/${m.workspace!.slug}`}
+                  className="flex-1 min-w-0"
+                >
+                  <h3 className="font-semibold text-lg">{m.workspace!.name}</h3>
+                  {m.workspace!.description && (
+                    <p className="text-sm text-gray-500 mt-1">{m.workspace!.description}</p>
+                  )}
+                </Link>
+                <div className="flex items-center gap-2 shrink-0">
                   <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
                     {m.role}
                   </span>
+                  {m.role === 'admin' && (
+                    <DeleteWorkspaceButton slug={m.workspace!.slug} name={m.workspace!.name} />
+                  )}
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         )}
