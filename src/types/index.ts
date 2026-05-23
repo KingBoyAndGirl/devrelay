@@ -66,3 +66,30 @@ export const ROLE_LABELS: Record<string, string> = {
   qa: '测试工程师',
   delivery_manager: '交付经理',
 };
+
+export const ROLE_PERMISSIONS: Record<string, { stages: string; capabilities: string[] }> = {
+  admin: {
+    stages: '全部阶段',
+    capabilities: ['管理空间', '邀请/移除成员', '管理 Agent', '管理项目', '连接仓库', '通过/驳回阶段', '触发部署'],
+  },
+  pm: {
+    stages: '01-02, 06, 10, 12',
+    capabilities: ['需求收集与 PRD 编写', '任务拆分与分配', '验收评审与交付', '邀请成员', '创建/归档项目', '同步 Issues'],
+  },
+  architect: {
+    stages: '03-05, 08',
+    capabilities: ['原型设计', '技术方案编写', '方案评审', '代码评审', '执行 Agent 任务', '创建项目'],
+  },
+  developer: {
+    stages: '07, 13',
+    capabilities: ['代码开发实现', '线上监控与反馈', '创建 PR（自动）', '执行 Agent 任务', '创建任务'],
+  },
+  qa: {
+    stages: '09',
+    capabilities: ['测试执行', '提交 Bug 反馈', '执行 Agent 任务', '创建任务'],
+  },
+  delivery_manager: {
+    stages: '11',
+    capabilities: ['部署发布', '查看部署状态', '变更审批', '通过/驳回阶段'],
+  },
+};

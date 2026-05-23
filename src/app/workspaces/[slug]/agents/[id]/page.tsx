@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AgentRunner from '@/components/agents/AgentRunner';
-import { ROLE_LABELS } from '@/types';
+import { ROLE_LABELS, ROLE_PERMISSIONS, STAGE_NAMES } from '@/types';
 
 interface TaskItem {
   id: string;
@@ -163,6 +163,26 @@ export default function AgentDetailPage() {
               {agent.enabled ? '禁用' : '启用'}
             </button>
           </div>
+
+          {/* Role permissions */}
+          {ROLE_PERMISSIONS[agent.role] && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <h4 className="text-xs font-medium text-gray-500 mb-2">角色权限</h4>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-gray-400">负责阶段：</span>
+                  <span className="text-gray-700 font-mono">{ROLE_PERMISSIONS[agent.role].stages}</span>
+                </div>
+                <div className="flex flex-wrap gap-1 items-start">
+                  {ROLE_PERMISSIONS[agent.role].capabilities.map((cap, i) => (
+                    <span key={i} className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">
+                      {cap}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-100 text-sm">
             <div>
