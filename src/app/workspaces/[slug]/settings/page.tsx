@@ -350,7 +350,17 @@ export default function WorkspaceSettingsPage() {
                   </div>
                   <div className="mt-3 text-xs text-gray-600 bg-gray-50 rounded p-2">
                     <p className="font-medium mb-1">在宿主机上运行：</p>
-                    <code className="text-green-700">devrelay-agent configure --token {agentToken.slice(0, 8)}...</code>
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="flex-1 text-green-700 bg-white px-2 py-1.5 rounded border border-gray-200 break-all select-all">
+                        devrelay configure --token {agentToken} --url {typeof window !== 'undefined' ? window.location.origin : ''}
+                      </code>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(`devrelay configure --token ${agentToken} --url ${window.location.origin}`); }}
+                        className="px-2 py-1.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 shrink-0"
+                      >
+                        复制
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
