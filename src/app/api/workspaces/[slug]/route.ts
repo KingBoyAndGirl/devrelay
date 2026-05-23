@@ -16,7 +16,7 @@ export async function GET(
 
   const ws = await db.query.workspaces.findFirst({
     where: eq(workspaces.slug, params.slug),
-    with: { members: true, repositories: true },
+    with: { members: { with: { user: true } }, repositories: true },
   });
 
   if (!ws) {

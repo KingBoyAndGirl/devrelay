@@ -48,7 +48,7 @@ export async function POST(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const { type, name, execPath, argsTemplate, envVars } = await req.json();
+  const { type, name, role, execPath, argsTemplate, envVars, gitName, gitEmail } = await req.json();
 
   if (!type || !name) {
     return NextResponse.json({ error: 'type and name are required' }, { status: 400 });
@@ -63,12 +63,15 @@ export async function POST(
     createdBy: userId,
     type,
     name: name.trim(),
+    role: role || 'developer',
     execPath: execPath || null,
     argsTemplate: argsTemplate || null,
     envVars: envVars || null,
+    gitName: gitName || null,
+    gitEmail: gitEmail || null,
     enabled: true,
     createdAt: now,
   });
 
-  return NextResponse.json({ id: agentId, name: name.trim(), type }, { status: 201 });
+  return NextResponse.json({ id: agentId, name: name.trim(), type, role: role || 'developer' }, { status: 201 });
 }

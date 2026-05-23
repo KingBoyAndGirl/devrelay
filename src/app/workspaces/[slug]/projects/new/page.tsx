@@ -1,8 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+
+interface TemplateInfo {
+  id: string;
+  name: string;
+  description: string;
+  taskCount: number;
+}
 
 export default function NewProjectPage() {
   const router = useRouter();
@@ -12,8 +19,17 @@ export default function NewProjectPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [customer, setCustomer] = useState('');
+  const [template, setTemplate] = useState('empty');
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/templates')
+      .then(r => r.json())
+      .then(data => setTemplates(data))
+      .catch(() => {});
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,7 +39,7 @@ export default function NewProjectPage() {
     const res = await fetch(`/api/workspaces/${slug}/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description, customer: customer || null }),
+      body: JSON.stringify({ name, description, customer: customer || null, template }),
     });
 
     if (res.ok) {
@@ -47,6 +63,33 @@ export default function NewProjectPage() {
           <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
         )}
         <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          {/* Template selector */}
+          {templates.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">项目模板（可选）</label>
+              <div className="grid grid-cols-2 gap-2">
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setTemplate(t.id)}
+                    className={`text-left p-3 rounded-lg border text-sm transition-colors ${
+                      template === t.id
+                        ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <p className="font-medium">{t.name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{t.description}</p>
+                    {t.taskCount > 0 && (
+                      <p className="text-xs text-blue-600 mt-1">{t.taskCount} 个预置任务</p>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">项目名称</label>
             <input

@@ -12,4 +12,16 @@ export async function initializeDatabase() {
   // Enable WAL mode for concurrent reads
   await client.execute('PRAGMA journal_mode=WAL');
   await client.execute('PRAGMA foreign_keys=ON');
+
+  // Run migrations for new columns (idempotent)
+  const migrations = [
+    `ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'developer'`,
+    `ALTER TABLE agents ADD COLUMN git_name TEXT`,
+    `ALTER TABLE agents ADD COLUMN git_email TEXT`,
+    `ALTER TABLE stages ADD COLUMN required_role TEXT`,
+  ];
+
+  for (const sql of migrations) {
+    try { await client.execute(sql); } catch { /* column already exists */ }
+  }
 }

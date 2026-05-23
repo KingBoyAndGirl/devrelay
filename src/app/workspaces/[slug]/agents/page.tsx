@@ -3,11 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import AgentRunner from '@/components/agents/AgentRunner';
+import { ROLE_LABELS } from '@/types';
 
 interface Agent {
   id: string;
   type: string;
   name: string;
+  role: string;
   execPath: string | null;
   argsTemplate: string | null;
   enabled: boolean;
@@ -31,14 +34,21 @@ const AGENT_TYPE_BADGES: Record<string, string> = {
   custom: 'bg-gray-100 text-gray-600',
 };
 
+const ROLE_BADGES: Record<string, string> = {
+  pm: 'bg-yellow-100 text-yellow-700',
+  architect: 'bg-purple-100 text-purple-700',
+  developer: 'bg-blue-100 text-blue-700',
+  qa: 'bg-green-100 text-green-700',
+  delivery_manager: 'bg-orange-100 text-orange-700',
+};
+
 export default function AgentsPage() {
   const routeParams = useParams();
   const slug = routeParams.slug as string;
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [executing, setExecuting] = useState<string | null>(null);
-  const [output, setOutput] = useState('');
+  const [activeRunner, setActiveRunner] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/workspaces/${slug}/agents`)
@@ -47,26 +57,11 @@ export default function AgentsPage() {
       .catch(() => setLoading(false));
   }, [slug]);
 
-  async function handleExecute(agentId: string) {
-    const input = window.prompt('输入 Agent 指令：');
-    if (!input) return;
-
-    setExecuting(agentId);
-    setOutput('执行中...');
-    const res = await fetch(`/api/agents/${agentId}/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: input }),
-    });
-    const data = await res.json();
-    setOutput(data.output || data.errors || '无输出');
-    setExecuting(null);
-  }
-
   async function handleDelete(agentId: string, name: string) {
     if (!confirm(`确定删除 Agent "${name}"？`)) return;
     await fetch(`/api/agents/${agentId}`, { method: 'DELETE' });
     setAgents(agents.filter(a => a.id !== agentId));
+    if (activeRunner === agentId) setActiveRunner(null);
   }
 
   async function handleToggle(agentId: string, enabled: boolean) {
@@ -91,16 +86,6 @@ export default function AgentsPage() {
       </div>
 
       <main className="max-w-4xl mx-auto p-6">
-        {output && (
-          <div className="mb-4 bg-gray-900 text-green-400 rounded-xl p-4 font-mono text-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-gray-400">执行结果</span>
-              <button onClick={() => setOutput('')} className="text-gray-400 hover:text-white text-xs">关闭</button>
-            </div>
-            <pre className="whitespace-pre-wrap">{output}</pre>
-          </div>
-        )}
-
         {loading ? (
           <p className="text-gray-500">加载中...</p>
         ) : agents.length === 0 ? (
@@ -110,44 +95,58 @@ export default function AgentsPage() {
             <Link href={`/workspaces/${slug}/agents/new`} className="text-blue-600 hover:underline text-sm">注册第一个 Agent</Link>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {agents.map((agent) => (
-              <div key={agent.id} className="bg-white border border-gray-200 rounded-xl p-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className={`text-xs px-2 py-1 rounded ${AGENT_TYPE_BADGES[agent.type] || ''}`}>
-                      {AGENT_TYPE_NAMES[agent.type] || agent.type}
-                    </span>
-                    <div>
-                      <h3 className="font-semibold">{agent.name}</h3>
-                      <p className="text-xs text-gray-400">
-                        {agent.execPath || '默认路径'} · 创建于 {new Date(agent.createdAt).toLocaleDateString('zh-CN')}
-                      </p>
+              <div key={agent.id}>
+                <div className="bg-white border border-gray-200 rounded-xl p-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className={`text-xs px-2 py-1 rounded ${AGENT_TYPE_BADGES[agent.type] || ''}`}>
+                        {AGENT_TYPE_NAMES[agent.type] || agent.type}
+                      </span>
+                      <span className={`text-xs px-2 py-1 rounded ${ROLE_BADGES[agent.role] || 'bg-gray-100 text-gray-600'}`}>
+                        {ROLE_LABELS[agent.role] || agent.role}
+                      </span>
+                      <div>
+                        <h3 className="font-semibold">{agent.name}</h3>
+                        <p className="text-xs text-gray-400">
+                          {agent.execPath || '默认路径'} · 创建于 {new Date(agent.createdAt).toLocaleDateString('zh-CN')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${agent.enabled ? 'bg-green-500' : 'bg-gray-300'}`} />
+                      <button
+                        onClick={() => handleToggle(agent.id, agent.enabled)}
+                        className="text-xs text-gray-500 hover:text-gray-700 px-2"
+                      >
+                        {agent.enabled ? '禁用' : '启用'}
+                      </button>
+                      <button
+                        onClick={() => setActiveRunner(activeRunner === agent.id ? null : agent.id)}
+                        className="px-3 py-1.5 text-xs bg-gray-900 text-green-400 rounded-lg hover:bg-gray-800 font-mono"
+                      >
+                        {activeRunner === agent.id ? '收起' : '▶ 执行'}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(agent.id, agent.name)}
+                        className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+                      >
+                        删除
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${agent.enabled ? 'bg-green-500' : 'bg-gray-300'}`} />
-                    <button
-                      onClick={() => handleToggle(agent.id, agent.enabled)}
-                      className="text-xs text-gray-500 hover:text-gray-700 px-2"
-                    >
-                      {agent.enabled ? '禁用' : '启用'}
-                    </button>
-                    <button
-                      onClick={() => handleExecute(agent.id)}
-                      disabled={executing === agent.id}
-                      className="px-3 py-1.5 text-xs bg-gray-900 text-green-400 rounded-lg hover:bg-gray-800 disabled:opacity-50 font-mono"
-                    >
-                      {executing === agent.id ? '执行中...' : '▶ 执行'}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(agent.id, agent.name)}
-                      className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
-                    >
-                      删除
-                    </button>
-                  </div>
                 </div>
+
+                {activeRunner === agent.id && (
+                  <div className="mt-3">
+                    <AgentRunner
+                      agentId={agent.id}
+                      agentName={agent.name}
+                      onClose={() => setActiveRunner(null)}
+                    />
+                  </div>
+                )}
               </div>
             ))}
           </div>

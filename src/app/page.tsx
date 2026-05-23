@@ -44,7 +44,8 @@ export default async function HomePage() {
         {memberships.length === 0 ? (
           <div className="text-center py-20 text-gray-500">
             <p className="text-lg mb-2">还没有空间</p>
-            <p className="text-sm">创建一个空间来开始管理你的交付项目</p>
+            <p className="text-sm mb-4">创建一个空间来开始管理你的交付项目</p>
+            <Link href="/onboarding" className="text-blue-600 hover:underline text-sm">开始引导设置 →</Link>
           </div>
         ) : (
           <div className="grid gap-4">

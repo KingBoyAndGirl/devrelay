@@ -33,7 +33,21 @@ export async function PUT(
     where: eq(projects.id, params.id),
   });
 
-  const { action, reviewNotes } = await req.json();
+  const { action, reviewNotes, requiredRole } = await req.json();
+
+  // Update requiredRole without status change
+  if (requiredRole && !action) {
+    await db
+      .update(stages)
+      .set({ requiredRole })
+      .where(and(eq(stages.projectId, params.id), eq(stages.step, step)));
+
+    const updatedStages = await db.query.stages.findMany({
+      where: eq(stages.projectId, params.id),
+      orderBy: (stages, { asc }) => [asc(stages.step)],
+    });
+    return NextResponse.json(updatedStages);
+  }
 
   if (action === 'approve') {
     if (stage.status !== 'in_progress') {

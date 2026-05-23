@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { projects, stages, pullRequests, deployments, feedback } from '@/lib/db/schema';
+import { projects, stages, pullRequests, deployments, feedback, agents } from '@/lib/db/schema';
 import { eq, inArray } from 'drizzle-orm';
 
 export async function GET(
@@ -44,8 +44,19 @@ export async function GET(
     }
   }
 
+  // Resolve assigned agent names
+  const assignedAgentIds = Array.from(new Set(project.stages.map(s => s.assignedTo).filter((id): id is string => id !== null)));
+  const assignedAgents = assignedAgentIds.length > 0
+    ? await db.query.agents.findMany({
+        where: inArray(agents.id, assignedAgentIds),
+        columns: { id: true, name: true },
+      })
+    : [];
+  const agentNameById = Object.fromEntries(assignedAgents.map(a => [a.id, a.name]));
+
   const stagesWithPRs = project.stages.map(s => ({
     ...s,
+    assignedAgentName: s.assignedTo ? (agentNameById[s.assignedTo] || null) : null,
     linkedPRs: (prsByStage[s.id] || []).map(p => ({
       id: p.id,
       prNumber: p.prNumber,

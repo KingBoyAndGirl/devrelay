@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db/client';
-import { repositories, pullRequests, linkedCommits, projectRepos, stages } from '@/lib/db/schema';
+import { repositories, pullRequests, linkedCommits, projectRepos, stages, githubIssues, tasks } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 import { createNotification } from '@/lib/notify';
@@ -143,12 +143,97 @@ export async function POST(
 
       case 'issues': {
         const issue = body.issue;
-        if (issue) {
-          for (const member of repo.workspace?.members || []) {
+        if (!issue) break;
+
+        const action = body.action;
+
+        // Upsert in githubIssues sync table
+        const existingIssue = await db.query.githubIssues.findFirst({
+          where: and(
+            eq(githubIssues.repositoryId, repo.id),
+            eq(githubIssues.issueNumber, issue.number),
+          ),
+        });
+
+        let syncedIssueId = existingIssue?.id;
+
+        if (existingIssue) {
+          await db.update(githubIssues).set({
+            title: issue.title,
+            body: issue.body || null,
+            state: issue.state,
+            labels: JSON.stringify(issue.labels?.map((l: any) => l.name) || []),
+            updatedAt: issue.updated_at || now,
+          }).where(eq(githubIssues.id, existingIssue.id));
+        } else {
+          syncedIssueId = createId();
+          await db.insert(githubIssues).values({
+            id: syncedIssueId,
+            repositoryId: repo.id,
+            issueNumber: issue.number,
+            title: issue.title,
+            body: issue.body || null,
+            state: issue.state,
+            labels: JSON.stringify(issue.labels?.map((l: any) => l.name) || []),
+            syncedAt: now,
+            createdAt: issue.created_at || now,
+            updatedAt: issue.updated_at || now,
+          });
+        }
+
+        // Create devrelay task for new issues on linked projects
+        if (action === 'opened' && !existingIssue) {
+          const linkedProjects = await db.query.projectRepos.findMany({
+            where: eq(projectRepos.repositoryId, repo.id),
+          });
+
+          for (const link of linkedProjects) {
+            // Find the first in-progress or todo stage (usually development, step 7)
+            const devStage = await db.query.stages.findFirst({
+              where: and(
+                eq(stages.projectId, link.projectId),
+                eq(stages.step, 7),
+              ),
+            });
+
+            const taskId = createId();
+            await db.insert(tasks).values({
+              id: taskId,
+              projectId: link.projectId,
+              title: `[GitHub] ${issue.title}`,
+              description: issue.body || null,
+              status: 'todo',
+              priority: issue.labels?.some((l: any) => l.name === 'bug') ? 'high' : 'medium',
+              stageId: devStage?.id || null,
+              agentId: devStage?.assignedTo || null,
+              githubIssueId: String(issue.number),
+              createdAt: now,
+              updatedAt: now,
+            });
+
+            // Link the task back in the sync table
+            if (syncedIssueId) {
+              await db.update(githubIssues)
+                .set({ devrelayTaskId: taskId })
+                .where(eq(githubIssues.id, syncedIssueId));
+            }
+          }
+        }
+
+        // If the issue is closed, update linked tasks to done
+        if (action === 'closed' && existingIssue?.devrelayTaskId) {
+          await db.update(tasks)
+            .set({ status: 'done', updatedAt: now })
+            .where(eq(tasks.id, existingIssue.devrelayTaskId));
+        }
+
+        // Notify workspace members
+        if (repo.workspace?.members) {
+          for (const member of repo.workspace.members) {
             await createNotification({
               userId: member.userId,
-              title: `Issue ${body.action}: ${issue.title}`,
-              message: `${repo.name} Issue #${issue.number}`,
+              title: `Issue ${action}: ${issue.title}`,
+              message: `${repo.name} Issue #${issue.number} ${action}`,
               type: 'comment',
             });
           }

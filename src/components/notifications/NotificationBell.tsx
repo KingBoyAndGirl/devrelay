@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 interface NotifItem {
   id: string;
@@ -18,11 +18,63 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await fetch('/api/notifications');
+      const data = await res.json();
+      setNotifications(data.notifications?.slice(0, 10) || []);
+      setUnreadCount(data.unreadCount || 0);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
-  }, []);
+
+    // SSE for real-time updates
+    let eventSource: EventSource | null = null;
+
+    function connectSSE() {
+      try {
+        eventSource = new EventSource('/api/notifications/stream');
+
+        eventSource.addEventListener('connected', () => {
+          // Connection established
+        });
+
+        eventSource.addEventListener('message', (e) => {
+          try {
+            const event = JSON.parse(e.data);
+            if (event.id) {
+              setNotifications(prev => {
+                const updated = [{ ...event, isRead: false, createdAt: new Date().toISOString() }, ...prev];
+                return updated.slice(0, 10);
+              });
+              setUnreadCount(prev => prev + 1);
+            }
+          } catch { /* ignore parse errors */ }
+        });
+
+        eventSource.onerror = () => {
+          eventSource?.close();
+          eventSource = null;
+          // Fall back to polling
+          const interval = setInterval(fetchNotifications, 30000);
+          return () => clearInterval(interval);
+        };
+      } catch {
+        // SSE not available, use polling
+        const interval = setInterval(fetchNotifications, 30000);
+        return () => clearInterval(interval);
+      }
+    }
+
+    const cleanup = connectSSE();
+
+    return () => {
+      eventSource?.close();
+      if (typeof cleanup === 'function') cleanup();
+    };
+  }, [fetchNotifications]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -33,13 +85,6 @@ export default function NotificationBell() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
-
-  async function fetchNotifications() {
-    const res = await fetch('/api/notifications');
-    const data = await res.json();
-    setNotifications(data.notifications?.slice(0, 10) || []);
-    setUnreadCount(data.unreadCount || 0);
-  }
 
   async function markAllRead() {
     await fetch('/api/notifications', {

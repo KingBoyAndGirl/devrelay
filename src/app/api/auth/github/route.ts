@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { repositories, workspaces } from '@/lib/db/schema';
+import { workspaces, githubOAuthTokens } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
-import { getAuthorizationUrl, exchangeCodeForToken, listRepos, createOctokit } from '@/lib/github';
+import { getAuthorizationUrl, exchangeCodeForToken } from '@/lib/github';
 import { config } from '@/lib/config';
 
 export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
-    return NextResponse.redirect(new URL('/login', req.url));
+    return NextResponse.redirect(new URL('/login', config.nextauthUrl));
   }
 
   const { searchParams } = new URL(req.url);
@@ -35,43 +35,25 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-      // Exchange code for token
       const { accessToken, refreshToken, expiresAt } = await exchangeCodeForToken(code);
       if (!accessToken) {
         return NextResponse.json({ error: 'Failed to get access token' }, { status: 400 });
       }
 
-      const octokit = createOctokit(accessToken);
-      const repos = await listRepos(octokit);
-      const now = new Date().toISOString();
+      // Store token temporarily for repo selection
+      const tokenId = createId();
+      await db.insert(githubOAuthTokens).values({
+        id: tokenId,
+        workspaceId: ws.id,
+        accessToken,
+        refreshToken: refreshToken || null,
+        tokenExpiresAt: expiresAt || null,
+        createdAt: new Date().toISOString(),
+      });
 
-      let added = 0;
-      for (const repo of repos) {
-        // Check if already exists in this workspace
-        const existing = await db.query.repositories.findFirst({
-          where: eq(repositories.remoteUrl, repo.cloneUrl),
-        });
-
-        if (existing) continue;
-
-        await db.insert(repositories).values({
-          id: createId(),
-          workspaceId: ws.id,
-          name: repo.fullName,
-          remoteUrl: repo.cloneUrl,
-          accessToken,
-          tokenExpiresAt: expiresAt || null,
-          refreshToken: refreshToken || null,
-          defaultBranch: repo.defaultBranch,
-          createdAt: now,
-          updatedAt: now,
-        });
-        added++;
-      }
-
-      // Redirect back to repos page
-      const redirectUrl = new URL(`/workspaces/${wsSlug}/repos`, req.url);
-      redirectUrl.searchParams.set('added', String(added));
+      // Redirect to repo selection page
+      const redirectUrl = new URL(`/workspaces/${wsSlug}/repos/select`, config.nextauthUrl);
+      redirectUrl.searchParams.set('token_id', tokenId);
       return NextResponse.redirect(redirectUrl);
     } catch (err) {
       console.error('[github-oauth] Error:', err);

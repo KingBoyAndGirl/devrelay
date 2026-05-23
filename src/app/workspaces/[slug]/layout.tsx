@@ -6,6 +6,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import NotificationBell from '@/components/notifications/NotificationBell';
+import NotificationNavBadge from '@/components/notifications/NotificationNavBadge';
 
 export default async function WorkspaceLayout({
   children,
@@ -40,6 +41,7 @@ export default async function WorkspaceLayout({
           <NavItem href={`/workspaces/${slug}/repos`} label="仓库" />
           <NavItem href={`/workspaces/${slug}/projects`} label="项目" />
           <NavItem href={`/workspaces/${slug}/agents`} label="Agent" />
+          <NavItem href={`/workspaces/${slug}/notifications`} label="通知" badge={<NotificationNavBadge />} />
           <NavItem href={`/workspaces/${slug}/settings`} label="设置" />
         </nav>
 
@@ -63,13 +65,14 @@ export default async function WorkspaceLayout({
   );
 }
 
-function NavItem({ href, label }: { href: string; label: string }) {
+function NavItem({ href, label, badge }: { href: string; label: string; badge?: React.ReactNode }) {
   return (
     <Link
       href={href}
-      className="block px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+      className="flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
     >
       {label}
+      {badge}
     </Link>
   );
 }

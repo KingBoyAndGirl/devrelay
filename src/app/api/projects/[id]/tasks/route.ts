@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { tasks } from '@/lib/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { tasks, stages } from '@/lib/db/schema';
+import { eq, and, desc } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 
 export async function GET(
@@ -15,20 +15,33 @@ export async function GET(
   }
 
   const status = req.nextUrl.searchParams.get('status');
-  const where = status
-    ? eq(tasks.projectId, params.id) // simplified; status filter applied below
-    : undefined;
+  const agentId = req.nextUrl.searchParams.get('agentId');
 
-  let list = await db.query.tasks.findMany({
+  const list = await db.query.tasks.findMany({
     where: eq(tasks.projectId, params.id),
     orderBy: [desc(tasks.updatedAt)],
   });
 
+  // Fetch stages for stage info enrichment
+  const projectStages = await db.query.stages.findMany({
+    where: eq(stages.projectId, params.id),
+  });
+  const stageMap = new Map(projectStages.map(s => [s.id, { id: s.id, step: s.step, name: s.name, status: s.status }]));
+
+  const enriched = list.map(t => ({
+    ...t,
+    stageInfo: t.stageId ? stageMap.get(t.stageId) || null : null,
+  }));
+
+  let filtered = enriched;
   if (status) {
-    list = list.filter(t => t.status === status);
+    filtered = filtered.filter(t => t.status === status);
+  }
+  if (agentId) {
+    filtered = filtered.filter(t => t.agentId === agentId);
   }
 
-  return NextResponse.json(list);
+  return NextResponse.json(filtered);
 }
 
 export async function POST(
@@ -50,6 +63,17 @@ export async function POST(
   const now = new Date().toISOString();
   const taskId = createId();
 
+  // Auto-assign agent from stage if stageId is provided
+  let agentId: string | null = null;
+  if (stageId) {
+    const stage = await db.query.stages.findFirst({
+      where: eq(stages.id, stageId),
+    });
+    if (stage?.assignedTo) {
+      agentId = stage.assignedTo;
+    }
+  }
+
   await db.insert(tasks).values({
     id: taskId,
     projectId: params.id,
@@ -59,9 +83,10 @@ export async function POST(
     priority: priority || 'medium',
     stageId: stageId || null,
     repositoryId: repositoryId || null,
+    agentId,
     createdAt: now,
     updatedAt: now,
   });
 
-  return NextResponse.json({ id: taskId, title: title.trim() }, { status: 201 });
+  return NextResponse.json({ id: taskId, title: title.trim(), agentId }, { status: 201 });
 }

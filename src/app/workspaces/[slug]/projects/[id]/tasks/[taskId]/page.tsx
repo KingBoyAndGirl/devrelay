@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import AgentRunner from '@/components/agents/AgentRunner';
 
 interface TaskDetail {
   id: string;
@@ -43,6 +44,7 @@ export default function TaskDetailPage() {
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
   const [saving, setSaving] = useState(false);
+  const [showRunner, setShowRunner] = useState(false);
 
   useEffect(() => {
     fetch(`/api/tasks/${taskId}`)
@@ -124,6 +126,14 @@ export default function TaskDetailPage() {
             <button onClick={() => setEditing(true)} className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-xs hover:bg-blue-700">编辑</button>
           )}
           <button onClick={handleDelete} className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50">删除</button>
+          {task.agentId && (
+            <button
+              onClick={() => setShowRunner(!showRunner)}
+              className="px-3 py-1.5 text-xs bg-gray-900 text-green-400 rounded-lg hover:bg-gray-800 font-mono"
+            >
+              {showRunner ? '收起执行器' : '▶ 执行 Agent'}
+            </button>
+          )}
         </div>
       </header>
 
@@ -212,6 +222,18 @@ export default function TaskDetailPage() {
             </div>
           </div>
         </div>
+
+        {showRunner && task.agentId && (
+          <div className="mt-6">
+            <AgentRunner
+              agentId={task.agentId}
+              agentName={`Agent-${task.agentId.slice(0, 8)}`}
+              projectId={projectId}
+              taskId={taskId}
+              onClose={() => setShowRunner(false)}
+            />
+          </div>
+        )}
       </main>
     </div>
   );

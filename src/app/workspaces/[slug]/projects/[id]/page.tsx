@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ROLE_LABELS } from '@/types';
+import ActivityFeed from '@/components/activities/ActivityFeed';
 
 interface LinkedPR {
   id: string;
@@ -18,6 +20,9 @@ interface Stage {
   step: number;
   name: string;
   status: string;
+  requiredRole: string | null;
+  assignedTo: string | null;
+  assignedAgentName: string | null;
   reviewNotes: string | null;
   startedAt: string | null;
   completedAt: string | null;
@@ -85,12 +90,14 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function ProjectDetailPage() {
   const routeParams = useParams();
+  const router = useRouter();
   const slug = routeParams.slug as string;
   const id = routeParams.id as string;
 
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<number | null>(null);
+  const [assigning, setAssigning] = useState<number | null>(null);
   const [rejectNotes, setRejectNotes] = useState('');
   const [showReject, setShowReject] = useState<number | null>(null);
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
@@ -103,10 +110,25 @@ export default function ProjectDetailPage() {
   const [feedbackTitle, setFeedbackTitle] = useState('');
   const [feedbackSeverity, setFeedbackSeverity] = useState('medium');
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [editingRole, setEditingRole] = useState<number | null>(null);
+  const [showAgentAssign, setShowAgentAssign] = useState(false);
+  const [workspaceAgents, setWorkspaceAgents] = useState<Array<{ id: string; name: string; role: string; type: string; assigned: boolean }>>([]);
+  const [savingAgents, setSavingAgents] = useState(false);
 
   useEffect(() => {
     fetchProject();
   }, [id]);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-role-dropdown]')) {
+        setEditingRole(null);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
   async function fetchProject() {
     const res = await fetch(`/api/projects/${id}`);
@@ -123,6 +145,17 @@ export default function ProjectDetailPage() {
       body: JSON.stringify({ action: 'approve' }),
     });
     setActing(null);
+    fetchProject();
+  }
+
+  async function handleAutoAssign(step: number) {
+    setAssigning(step);
+    await fetch(`/api/projects/${id}/stages/auto-assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ step }),
+    });
+    setAssigning(null);
     fetchProject();
   }
 
@@ -209,6 +242,64 @@ export default function ProjectDetailPage() {
     fetchProject();
   }
 
+  async function handleArchive() {
+    await fetch(`/api/projects/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'archived' }),
+    });
+    fetchProject();
+  }
+
+  async function handleUnarchive() {
+    await fetch(`/api/projects/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'active' }),
+    });
+    fetchProject();
+  }
+
+  async function handleRoleChange(step: number, requiredRole: string) {
+    setEditingRole(null);
+    await fetch(`/api/projects/${id}/stages/${step}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requiredRole }),
+    });
+    fetchProject();
+  }
+
+  async function loadAgents() {
+    const res = await fetch(`/api/projects/${id}/agents`);
+    setWorkspaceAgents(await res.json());
+    setShowAgentAssign(true);
+  }
+
+  async function saveAgents() {
+    setSavingAgents(true);
+    const agentIds = workspaceAgents.filter(a => a.assigned).map(a => a.id);
+    await fetch(`/api/projects/${id}/agents`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentIds }),
+    });
+    setSavingAgents(false);
+    setShowAgentAssign(false);
+  }
+
+  function toggleAgent(agentId: string) {
+    setWorkspaceAgents(prev =>
+      prev.map(a => a.id === agentId ? { ...a, assigned: !a.assigned } : a)
+    );
+  }
+
+  async function handleDelete() {
+    if (!confirm('确定删除此项目？所有关联的任务、阶段和文档将被删除。此操作不可撤销。')) return;
+    await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    router.push(`/workspaces/${slug}/projects`);
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -233,18 +324,15 @@ export default function ProjectDetailPage() {
 
   return (
     <div>
-      {/* Project info bar */}
-      <div className="px-6 py-4 space-y-3">
-        {project.customer && (
-          <span className="text-sm text-gray-500">客户: {project.customer}</span>
-        )}
+      {/* Progress bar */}
+      <div className="px-6 py-3 space-y-2">
         {project.description && (
           <p className="text-sm text-gray-500">{project.description}</p>
         )}
         <div className="flex items-center gap-3">
-          <div className="flex-1 bg-gray-200 rounded-full h-3">
+          <div className="flex-1 bg-gray-200 rounded-full h-2.5">
             <div
-              className={`h-3 rounded-full transition-all ${allComplete ? 'bg-green-500' : 'bg-blue-600'}`}
+              className={`h-2.5 rounded-full transition-all ${allComplete ? 'bg-green-500' : 'bg-blue-600'}`}
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -253,6 +341,32 @@ export default function ProjectDetailPage() {
       </div>
 
       <div className="max-w-5xl mx-auto px-6 pb-6">
+        {/* Project actions */}
+        <div className="flex items-center justify-end gap-2 mb-4">
+          {project.status === 'active' && (
+            <button
+              onClick={handleArchive}
+              className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              归档项目
+            </button>
+          )}
+          {project.status === 'archived' && (
+            <button
+              onClick={handleUnarchive}
+              className="px-3 py-1.5 text-xs border border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50"
+            >
+              恢复项目
+            </button>
+          )}
+          <button
+            onClick={handleDelete}
+            className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+          >
+            删除项目
+          </button>
+        </div>
+
         <div className="space-y-3">
           {project.stages.map((stage) => (
             <div
@@ -275,6 +389,51 @@ export default function ProjectDetailPage() {
                     }`}>
                       {STATUS_LABEL[stage.status]}
                     </span>
+                    {(stage.status === 'pending' || stage.status === 'in_progress') ? (
+                      <div className="relative" data-role-dropdown>
+                        <button
+                          onClick={() => setEditingRole(editingRole === stage.step ? null : stage.step)}
+                          className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 cursor-pointer"
+                        >
+                          {stage.requiredRole ? (ROLE_LABELS[stage.requiredRole] || stage.requiredRole) : '未设置'} ▾
+                        </button>
+                        {editingRole === stage.step && (
+                          <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1 min-w-[120px]">
+                            {['developer', 'qa', 'delivery_manager', 'pm', 'architect'].map(role => (
+                              <button
+                                key={role}
+                                onClick={() => handleRoleChange(stage.step, role)}
+                                className={`block w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 ${
+                                  stage.requiredRole === role ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+                                }`}
+                              >
+                                {ROLE_LABELS[role] || role}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      stage.requiredRole && (
+                        <span className="text-xs text-gray-400">
+                          {ROLE_LABELS[stage.requiredRole] || stage.requiredRole}
+                        </span>
+                      )
+                    )}
+                    {stage.assignedAgentName && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-mono">
+                        {stage.assignedAgentName}
+                      </span>
+                    )}
+                    {(stage.status === 'pending' || stage.status === 'in_progress') && !stage.assignedTo && (
+                      <button
+                        onClick={() => handleAutoAssign(stage.step)}
+                        disabled={assigning === stage.step}
+                        className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50"
+                      >
+                        {assigning === stage.step ? '分配中...' : '自动分配'}
+                      </button>
+                    )}
                   </div>
                   {stage.startedAt && (
                     <p className="text-xs text-gray-400 mt-1">
@@ -503,6 +662,63 @@ export default function ProjectDetailPage() {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Agent Assignment */}
+        <div className="mt-8 bg-white border border-gray-200 rounded-xl p-5">
+          <button
+            onClick={() => showAgentAssign ? setShowAgentAssign(false) : loadAgents()}
+            className="flex items-center justify-between w-full text-left"
+          >
+            <h3 className="font-semibold">Agent 分配</h3>
+            <span className="text-xs text-gray-400">{showAgentAssign ? '收起 ▲' : '展开 ▼'}</span>
+          </button>
+
+          {showAgentAssign && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              {workspaceAgents.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">暂无 Agent</p>
+              ) : (
+                <div className="space-y-2">
+                  {workspaceAgents.map(agent => (
+                    <label
+                      key={agent.id}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={agent.assigned}
+                        onChange={() => toggleAgent(agent.id)}
+                        className="rounded"
+                      />
+                      <span className="font-medium text-sm flex-1">{agent.name}</span>
+                      <span className="text-xs text-gray-400">{agent.type}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                        {ROLE_LABELS[agent.role] || agent.role}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={saveAgents}
+                  disabled={savingAgents}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {savingAgents ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Activity Feed */}
+        <div className="mt-8">
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h3 className="font-semibold mb-4">最近活动</h3>
+            <ActivityFeed projectId={id} limit={20} />
+          </div>
         </div>
       </div>
     </div>

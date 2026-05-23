@@ -1,18 +1,56 @@
 import { createServer } from 'http';
 import { parse } from 'url';
+import { spawn, ChildProcess } from 'child_process';
 import next from 'next';
 import { Server as SocketIOServer } from 'socket.io';
 import { config } from './src/lib/config';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
-const port = 3000;
+const port = parseInt(process.env.PORT || '3000', 10);
+const sidecarPort = parseInt(process.env.AGENT_RUNNER_PORT || '4100', 10);
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
+let sidecarRestarts = 0;
+
+function startSidecar(): ChildProcess | null {
+  if (process.env.NO_SIDECAR) return null;
+
+  const child = spawn('npx', ['tsx', 'src/agent-runner/index.ts'], {
+    env: {
+      ...process.env,
+      AGENT_RUNNER_PORT: String(sidecarPort),
+    },
+    stdio: 'pipe',
+  });
+
+  child.stdout!.on('data', (chunk: Buffer) => {
+    process.stdout.write(`[sidecar] ${chunk.toString().trim()}\n`);
+  });
+
+  child.stderr!.on('data', (chunk: Buffer) => {
+    process.stderr.write(`[sidecar] ${chunk.toString().trim()}\n`);
+  });
+
+  child.on('exit', (code) => {
+    if (code !== 0 && code !== null) {
+      sidecarRestarts++;
+      if (sidecarRestarts > 5) {
+        console.error(`[devrelay] Sidecar crashed ${sidecarRestarts} times, giving up.`);
+        return;
+      }
+      const delay = Math.min(1000 * Math.pow(2, sidecarRestarts), 30000);
+      console.warn(`[devrelay] Sidecar exited with code ${code}, restart #${sidecarRestarts} in ${delay / 1000}s...`);
+      setTimeout(() => startSidecar(), delay);
+    }
+  });
+
+  return child;
+}
+
 app.prepare().then(async () => {
-  // Dynamic imports after Next.js is ready
   const { initializeDatabase } = await import('./src/lib/db/client');
   const { ensureAdminUser } = await import('./src/lib/auth');
   const { ensureDataDir } = await import('./src/lib/docs');
@@ -41,12 +79,21 @@ app.prepare().then(async () => {
     });
   });
 
-  // Mount io for access in API routes
   (globalThis as any).io = io;
 
+  // Start agent sidecar
+  const sidecar = startSidecar();
+  if (sidecar) {
+    process.on('SIGTERM', () => { sidecar.kill('SIGTERM'); });
+    process.on('SIGINT',  () => { sidecar.kill('SIGINT'); });
+  }
+
   server.listen(port, () => {
-    console.log(`[devrelay] Server ready on http://${hostname}:${port}`);
-    console.log(`[devrelay] Data directory: ${config.dataDir}`);
-    console.log(`[devrelay] Admin user: ${config.adminUser}`);
+    console.log(`\n[devrelay] ========================================`);
+    console.log(`[devrelay]  Server   http://${hostname}:${port}`);
+    console.log(`[devrelay]  Sidecar  http://${hostname}:${sidecarPort}`);
+    console.log(`[devrelay]  Data     ${config.dataDir}`);
+    console.log(`[devrelay]  Admin    ${config.adminUser}`);
+    console.log(`[devrelay] ========================================\n`);
   });
 });

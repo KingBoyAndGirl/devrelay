@@ -15,12 +15,31 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const issues = await db.query.githubIssues.findMany({
-    where: eq(githubIssues.devrelayTaskId, params.id),
-    orderBy: (githubIssues, { desc }) => [desc(githubIssues.updatedAt)],
+  // Find all repos linked to this project
+  const linkedRepos = await db.query.projectRepos.findMany({
+    where: eq(projectRepos.projectId, params.id),
   });
 
-  return NextResponse.json(issues);
+  const repoIds = linkedRepos.map(r => r.repositoryId);
+
+  if (repoIds.length === 0) {
+    return NextResponse.json([]);
+  }
+
+  // Fetch issues for all linked repos
+  const allIssues: any[] = [];
+  for (const rid of repoIds) {
+    const issues = await db.query.githubIssues.findMany({
+      where: eq(githubIssues.repositoryId, rid),
+      orderBy: (githubIssues, { desc }) => [desc(githubIssues.updatedAt)],
+    });
+    allIssues.push(...issues);
+  }
+
+  // Sort by updatedAt desc
+  allIssues.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  return NextResponse.json(allIssues);
 }
 
 export async function POST(

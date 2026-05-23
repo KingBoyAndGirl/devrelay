@@ -1,9 +1,16 @@
 import { db } from '@/lib/db/client';
-import { stages } from '@/lib/db/schema';
+import { stages, activities } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
+import { autoAssignStage } from './assign';
+import { createId } from '@paralleldrive/cuid2';
 
-export async function approveStage(projectId: string, step: number): Promise<void> {
+export async function approveStage(projectId: string, step: number, actorId?: string, actorName?: string): Promise<void> {
   const now = new Date().toISOString();
+
+  // Find the stage being approved
+  const stage = await db.query.stages.findFirst({
+    where: and(eq(stages.projectId, projectId), eq(stages.step, step)),
+  });
 
   // Mark current stage as completed
   await db
@@ -11,21 +18,45 @@ export async function approveStage(projectId: string, step: number): Promise<voi
     .set({ status: 'completed', completedAt: now })
     .where(and(eq(stages.projectId, projectId), eq(stages.step, step)));
 
-  // If not the last step, set next stage to in_progress
+  // If not the last step, set next stage to in_progress and auto-assign
   if (step < 13) {
     await db
       .update(stages)
       .set({ status: 'in_progress', startedAt: now })
       .where(and(eq(stages.projectId, projectId), eq(stages.step, step + 1)));
+
+    // Auto-assign the next stage
+    await autoAssignStage(projectId, step + 1);
+  }
+
+  // Log activity
+  if (stage) {
+    await db.insert(activities).values({
+      id: createId(),
+      projectId,
+      actorId: actorId || 'system',
+      actorName: actorName || 'System',
+      action: 'stage_approved',
+      target: stage.id,
+      metadata: JSON.stringify({ step, stageName: stage.name }),
+      createdAt: now,
+    });
   }
 }
 
 export async function rejectStage(
   projectId: string,
   step: number,
-  reviewNotes: string
+  reviewNotes: string,
+  actorId?: string,
+  actorName?: string
 ): Promise<void> {
   const now = new Date().toISOString();
+
+  // Find the stage being rejected
+  const stage = await db.query.stages.findFirst({
+    where: and(eq(stages.projectId, projectId), eq(stages.step, step)),
+  });
 
   // Mark current stage as rejected
   await db
@@ -39,6 +70,20 @@ export async function rejectStage(
       .update(stages)
       .set({ status: 'in_progress', startedAt: now, completedAt: null })
       .where(and(eq(stages.projectId, projectId), eq(stages.step, step - 1)));
+  }
+
+  // Log activity
+  if (stage) {
+    await db.insert(activities).values({
+      id: createId(),
+      projectId,
+      actorId: actorId || 'system',
+      actorName: actorName || 'System',
+      action: 'stage_rejected',
+      target: stage.id,
+      metadata: JSON.stringify({ step, stageName: stage.name, reviewNotes }),
+      createdAt: now,
+    });
   }
 }
 

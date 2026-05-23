@@ -84,15 +84,16 @@ export const projectRepos = sqliteTable('project_repos', {
 
 // ===== Stage =====
 export const stages = sqliteTable('stages', {
-  id:          text('id').primaryKey(),
-  projectId:   text('project_id').notNull().references(() => projects.id),
-  step:        integer('step').notNull(),
-  name:        text('name').notNull(),
-  status:      text('status').notNull().default('pending'),
-  assignedTo:  text('assigned_to'),
-  reviewNotes: text('review_notes'),
-  startedAt:   text('started_at'),
-  completedAt: text('completed_at'),
+  id:           text('id').primaryKey(),
+  projectId:    text('project_id').notNull().references(() => projects.id),
+  step:         integer('step').notNull(),
+  name:         text('name').notNull(),
+  status:       text('status').notNull().default('pending'),
+  requiredRole: text('required_role'),
+  assignedTo:   text('assigned_to'),
+  reviewNotes:  text('review_notes'),
+  startedAt:    text('started_at'),
+  completedAt:  text('completed_at'),
 }, (table) => ({
   uniq: uniqueIndex('st_uniq').on(table.projectId, table.step),
 }));
@@ -137,10 +138,13 @@ export const agents = sqliteTable('agents', {
   createdBy:    text('created_by').notNull().references(() => users.id),
   type:         text('type').notNull(),
   name:         text('name').notNull(),
+  role:         text('role').notNull().default('developer'),
   execPath:     text('exec_path'),
   argsTemplate: text('args_template'),
   envVars:      text('env_vars'),
   enabled:      integer('enabled', { mode: 'boolean' }).default(true),
+  gitName:      text('git_name'),
+  gitEmail:     text('git_email'),
   config:       text('config'),
   createdAt:    text('created_at').notNull(),
 });
@@ -245,6 +249,16 @@ export const activities = sqliteTable('activities', {
   target:      text('target'),
   metadata:    text('metadata'),
   createdAt:   text('created_at').notNull(),
+});
+
+// ===== GitHub OAuth temporary token =====
+export const githubOAuthTokens = sqliteTable('github_oauth_tokens', {
+  id:             text('id').primaryKey(),
+  workspaceId:    text('workspace_id').notNull(),
+  accessToken:    text('access_token').notNull(),
+  refreshToken:   text('refresh_token'),
+  tokenExpiresAt: text('token_expires_at'),
+  createdAt:      text('created_at').notNull(),
 });
 
 // ===== Deployments =====

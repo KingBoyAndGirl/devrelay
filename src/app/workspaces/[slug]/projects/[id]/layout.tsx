@@ -4,6 +4,7 @@ import { projects } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import ProjectNav from './nav';
 
 export default async function ProjectLayout({
   children,
@@ -24,8 +25,8 @@ export default async function ProjectLayout({
   return (
     <div>
       {/* Project header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3">
-        <div className="flex items-center gap-4">
+      <header className="bg-white border-b border-gray-200">
+        <div className="px-6 py-3 flex items-center gap-4">
           <Link
             href={`/workspaces/${params.slug}/projects`}
             className="text-sm text-gray-500 hover:text-gray-700"
@@ -33,6 +34,9 @@ export default async function ProjectLayout({
             &larr; 项目列表
           </Link>
           <h2 className="font-bold text-lg">{project.name}</h2>
+          {project.customer && (
+            <span className="text-sm text-gray-400">客户: {project.customer}</span>
+          )}
           <span className={`text-xs px-2 py-0.5 rounded-full ${
             project.status === 'completed' ? 'bg-green-100 text-green-700' :
             project.status === 'archived' ? 'bg-gray-100 text-gray-500' :
@@ -43,26 +47,9 @@ export default async function ProjectLayout({
              project.status === 'archived' ? '已归档' : project.status}
           </span>
         </div>
-        {/* Project sub-nav */}
-        <nav className="flex gap-1 mt-3">
-          <SubNav href={`/workspaces/${params.slug}/projects/${params.id}`} label="流程看板" />
-          <SubNav href={`/workspaces/${params.slug}/projects/${params.id}/documents`} label="文档" />
-          <SubNav href={`/workspaces/${params.slug}/projects/${params.id}/tasks`} label="任务" />
-          <SubNav href={`/workspaces/${params.slug}/projects/${params.id}/prs`} label="Pull Requests" />
-        </nav>
+        <ProjectNav slug={params.slug} id={params.id} />
       </header>
       {children}
     </div>
-  );
-}
-
-function SubNav({ href, label }: { href: string; label: string }) {
-  return (
-    <Link
-      href={href}
-      className="px-3 py-1.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-    >
-      {label}
-    </Link>
   );
 }

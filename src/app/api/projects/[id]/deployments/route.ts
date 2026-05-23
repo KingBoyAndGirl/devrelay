@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { deployments, projects, stages } from '@/lib/db/schema';
+import { deployments, projects, stages, activities } from '@/lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 import { createNotification } from '@/lib/notify';
@@ -57,6 +57,18 @@ export async function POST(
 
   await db.insert(deployments).values(deployment);
 
+  // Log activity
+  await db.insert(activities).values({
+    id: createId(),
+    projectId: params.id,
+    actorId: (session.user as any).id || 'system',
+    actorName: (session.user as any).username || 'User',
+    action: 'deployment_started',
+    target: deployment.id,
+    metadata: JSON.stringify({ version: deployment.version, environment: deployment.environment }),
+    createdAt: now,
+  });
+
   // Set the deployment stage to in_progress
   if (deployStage.status === 'pending') {
     await db.update(stages)
@@ -102,6 +114,20 @@ export async function PUT(
   await db.update(deployments)
     .set(updates)
     .where(eq(deployments.id, deploymentId));
+
+  // Log activity for deployment completion/failure
+  if (status === 'success' || status === 'failed') {
+    await db.insert(activities).values({
+      id: createId(),
+      projectId: params.id,
+      actorId: (session.user as any).id || 'system',
+      actorName: (session.user as any).username || 'User',
+      action: status === 'success' ? 'deployment_completed' : 'deployment_failed',
+      target: deploymentId,
+      metadata: JSON.stringify({ status, version: dep.version }),
+      createdAt: now,
+    });
+  }
 
   // Auto-approve stage 11 on successful deploy
   if (status === 'success' && dep.stageId) {

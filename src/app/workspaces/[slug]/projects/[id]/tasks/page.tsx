@@ -4,6 +4,13 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 
+interface StageInfo {
+  id: string;
+  step: number;
+  name: string;
+  status: string;
+}
+
 interface Task {
   id: string;
   title: string;
@@ -12,6 +19,7 @@ interface Task {
   priority: string;
   assignedTo: string | null;
   stageId: string | null;
+  stageInfo: StageInfo | null;
   agentId: string | null;
   gitBranch: string | null;
   githubIssueId: string | null;
@@ -50,14 +58,25 @@ export default function TasksPage() {
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newPriority, setNewPriority] = useState('medium');
+  const [newStageId, setNewStageId] = useState('');
+  const [stages, setStages] = useState<StageInfo[]>([]);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { fetchTasks(); }, [projectId]);
+  useEffect(() => { fetchTasks(); fetchStages(); }, [projectId]);
 
   async function fetchTasks() {
     const res = await fetch(`/api/projects/${projectId}/tasks`);
     setTasks(await res.json());
     setLoading(false);
+  }
+
+  async function fetchStages() {
+    const res = await fetch(`/api/projects/${projectId}`);
+    const data = await res.json();
+    const stageList = data.stages || [];
+    setStages(stageList);
+    const firstActive = stageList.find((s: StageInfo) => s.status === 'in_progress' || s.status === 'pending');
+    if (firstActive) setNewStageId(firstActive.id);
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -66,12 +85,13 @@ export default function TasksPage() {
     const res = await fetch(`/api/projects/${projectId}/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle, description: newDesc, priority: newPriority }),
+      body: JSON.stringify({ title: newTitle, description: newDesc, priority: newPriority, stageId: newStageId || null }),
     });
     if (res.ok) {
       setShowNew(false);
       setNewTitle('');
       setNewDesc('');
+      setNewStageId('');
       fetchTasks();
     }
     setSaving(false);
@@ -143,6 +163,23 @@ export default function TasksPage() {
                 ))}
               </select>
             </div>
+            {stages.length > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">所属阶段</label>
+                <select
+                  value={newStageId}
+                  onChange={(e) => setNewStageId(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">不关联阶段</option>
+                  {stages.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {String(s.step).padStart(2, '0')} - {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <button
               type="submit"
               disabled={saving}
@@ -187,6 +224,11 @@ export default function TasksPage() {
                         <span className={`text-xs px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority] || ''}`}>
                           {PRIORITY_LABELS[task.priority] || task.priority}
                         </span>
+                        {task.stageInfo && (
+                          <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
+                            {String(task.stageInfo.step).padStart(2, '0')} {task.stageInfo.name}
+                          </span>
+                        )}
                         {task.githubIssueId && (
                           <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
                             #{task.githubIssueId}

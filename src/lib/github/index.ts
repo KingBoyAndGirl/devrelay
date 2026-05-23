@@ -112,3 +112,21 @@ export async function verifyToken(octokit: Octokit): Promise<{ login: string; va
     return { login: '', valid: false };
   }
 }
+
+export async function createGitHubIssue(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  title: string,
+  body?: string,
+  labels?: string[]
+): Promise<{ issueNumber: number; issueUrl: string }> {
+  const { data } = await octokit.rest.issues.create({
+    owner,
+    repo,
+    title,
+    body,
+    labels,
+  });
+  return { issueNumber: data.number, issueUrl: data.html_url };
+}
