@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { io, Socket } from 'socket.io-client';
 
 interface Member {
   id: string;
@@ -68,8 +69,16 @@ export default function WorkspaceSettingsPage() {
     loadMembers();
     loadInvites();
     loadTokens();
-    const interval = setInterval(loadTokens, 30000);
-    return () => clearInterval(interval);
+
+    // Real-time agent status via Socket.IO
+    const socket: Socket = io({ transports: ['websocket', 'polling'] });
+    socket.on('agent:status', (data: { workspaceSlug: string; tokenId: string; online: boolean; lastSeenAt: string | null }) => {
+      if (data.workspaceSlug !== slug) return;
+      setTokens(prev => prev.map(t =>
+        t.id === data.tokenId ? { ...t, online: data.online, lastSeenAt: data.lastSeenAt } : t
+      ));
+    });
+    return () => { socket.disconnect(); };
   }, [slug]);
 
   async function loadTokens() {

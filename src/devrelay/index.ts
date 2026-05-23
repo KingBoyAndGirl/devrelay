@@ -147,6 +147,7 @@ function cmdStatus() {
 
   console.log('\n  DevRelay Agent Status');
   console.log('  ────────────────────');
+  console.log('  Version:      ' + VERSION);
   console.log('  Config:       ' + CONFIG_FILE);
   console.log('  Port:         ' + config.port);
   console.log('  Token:        ' + (config.token ? config.token.slice(0, 8) + '...' : '(not set)'));
@@ -268,8 +269,20 @@ function getPortPid(port: number): number | null {
   }
 }
 
+// Notify server that agent is going offline (synchronous, blocks until done)
+function notifyOffline(cfg: AgentConfig = resolveConfig()) {
+  if (!cfg.token || !cfg.serverUrl) return;
+  try {
+    const url = `${cfg.serverUrl}/api/agent/disconnect`;
+    execSync(`curl -s -X POST -H "Authorization: Bearer ${cfg.token}" -m 3 "${url}"`, { timeout: 5000 });
+  } catch {}
+}
+
 function cmdStop() {
   const cfg = resolveConfig();
+  // Notify server immediately before killing
+  notifyOffline(cfg);
+  // Try PID file first, then port detection
   // Try PID file first, then port detection
   let pid: number | null = null;
   if (existsSync(PID_FILE)) {
@@ -298,7 +311,10 @@ function startDaemon(flags: Record<string, string>) {
   if (pid) {
     try { process.kill(pid, 'SIGTERM'); } catch {}
   }
-  const child = spawn(process.execPath, [process.argv[1], 'start', '--port', String(port)], {
+  const bin = process.argv[1];
+  // Reuse the same tsx loader that's running this process (via process.execArgv)
+  const args = [...process.execArgv, bin, 'start', '--port', String(port)];
+  const child = spawn(process.argv[0], args, {
     detached: true,
     stdio: 'ignore',
   });
@@ -314,6 +330,8 @@ function startDaemon(flags: Record<string, string>) {
 function cmdRestart(flags: Record<string, string>) {
   const cfg = resolveConfig();
   if (flags.port) cfg.port = parseInt(flags.port, 10);
+  // Notify server immediately before killing old process
+  notifyOffline(cfg);
   const pid = getPortPid(cfg.port);
   if (pid) {
     try {
@@ -842,6 +860,12 @@ function startServer(flags: Record<string, string> = {}) {
 
   // Heartbeat: re-verify token to keep online status fresh
   if (AUTH_TOKEN && cfg.serverUrl) {
+    // Immediate sync: mark online right away
+    fetch(`${cfg.serverUrl}/api/agent/verify`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+
     setInterval(() => {
       fetch(`${cfg.serverUrl}/api/agent/verify`, {
         headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
@@ -852,6 +876,7 @@ function startServer(flags: Record<string, string> = {}) {
 
   process.on('SIGTERM', () => {
     console.log('[devrelay] shutting down...');
+    notifyOffline();
     executions.forEach((exec) => exec.process.kill('SIGTERM'));
     server.close();
     process.exit(0);
