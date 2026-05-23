@@ -1,0 +1,45 @@
+{
+  "name": "devrelay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-driven software delivery lifecycle management platform",
+  "license": "AGPL-3.0",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "next build",
+    "start": "NODE_ENV=production tsx server.ts",
+    "lint": "next lint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "@paralleldrive/cuid2": "^2.2.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.0",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
+    "next": "^14.2.0",
+    "next-auth": "^4.24.0",
+    "octokit": "^3.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "socket.io": "^4.8.0",
+    "socket.io-client": "^4.8.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

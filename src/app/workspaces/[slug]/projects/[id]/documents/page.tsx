@@ -1,0 +1,170 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useParams } from 'next/navigation';
+import Link from 'next/link';
+
+interface Doc {
+  id: string;
+  title: string;
+  type: string;
+  version: number;
+  filePath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const DOC_TYPES: Record<string, string> = {
+  prd: 'PRD',
+  prototype: '原型设计',
+  tech_design: '技术方案',
+  code_review_report: '代码评审报告',
+  test_plan: '测试计划',
+  test_report: '测试报告',
+  acceptance_report: '验收报告',
+  deployment_log: '部署日志',
+};
+
+export default function DocumentsPage() {
+  const routeParams = useParams();
+  const slug = routeParams.slug as string;
+  const id = routeParams.id as string;
+
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+  const [title, setTitle] = useState('');
+  const [docType, setDocType] = useState('prd');
+  const [content, setContent] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { fetchDocs(); }, [id]);
+
+  async function fetchDocs() {
+    const res = await fetch(`/api/projects/${id}/documents`);
+    setDocs(await res.json());
+    setLoading(false);
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    const res = await fetch(`/api/projects/${id}/documents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, type: docType, content }),
+    });
+    if (res.ok) {
+      setShowNew(false);
+      setTitle('');
+      setContent('');
+      fetchDocs();
+    }
+    setSaving(false);
+  }
+
+  async function handleDelete(docId: string) {
+    if (!confirm('确定删除此文档？')) return;
+    await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+    fetchDocs();
+  }
+
+  return (
+    <div className="min-h-screen">
+      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Link href={`/workspaces/${slug}/projects/${id}`} className="text-gray-500 hover:text-gray-700">&larr; 返回项目</Link>
+          <h1 className="text-xl font-bold">文档中心</h1>
+        </div>
+        <button
+          onClick={() => setShowNew(!showNew)}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
+        >
+          {showNew ? '取消' : '新建文档'}
+        </button>
+      </header>
+
+      <main className="max-w-4xl mx-auto p-6">
+        {showNew && (
+          <form onSubmit={handleCreate} className="bg-white border border-gray-200 rounded-xl p-5 mb-6 space-y-4">
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-gray-700 mb-1">文档标题</label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="例如：v2.0 PRD"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">文档类型</label>
+                <select
+                  value={docType}
+                  onChange={(e) => setDocType(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Object.entries(DOC_TYPES).map(([k, v]) => (
+                    <option key={k} value={k}>{v}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">内容（Markdown）</label>
+              <textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                rows={8}
+                placeholder="输入 Markdown 内容..."
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={saving}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? '创建中...' : '创建文档'}
+            </button>
+          </form>
+        )}
+
+        {loading ? (
+          <p className="text-gray-500">加载中...</p>
+        ) : docs.length === 0 ? (
+          <div className="text-center py-20 text-gray-500">
+            <p className="text-lg mb-2">还没有文档</p>
+            <p className="text-sm">创建 PRD、技术方案、测试报告等文档</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {docs.map((doc) => (
+              <div key={doc.id} className="bg-white border border-gray-200 rounded-xl p-5 flex items-center justify-between">
+                <Link href={`/workspaces/${slug}/projects/${id}/documents/${doc.id}`} className="flex-1">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">{DOC_TYPES[doc.type] || doc.type}</span>
+                    <div>
+                      <h3 className="font-semibold hover:text-blue-600">{doc.title}</h3>
+                      <p className="text-xs text-gray-400">
+                        v{doc.version} · 更新于 {new Date(doc.updatedAt).toLocaleString('zh-CN')}
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+                <button
+                  onClick={() => handleDelete(doc.id)}
+                  className="text-xs text-red-500 hover:text-red-700 px-2"
+                >
+                  删除
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

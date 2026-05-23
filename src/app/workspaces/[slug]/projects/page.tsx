@@ -1,0 +1,98 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+
+interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  customer: string | null;
+  status: string;
+  stages: Array<{ step: number; status: string }>;
+  createdAt: string;
+}
+
+export default function ProjectsPage({ params: _params }: { params: { slug: string } }) {
+  const router = useRouter();
+  const routeParams = useParams();
+  const slug = routeParams.slug as string;
+
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/workspaces/${slug}/projects`)
+      .then(r => r.json())
+      .then(data => { setProjects(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [slug]);
+
+  function progress(stages: Project['stages']) {
+    const done = stages.filter(s => s.status === 'completed').length;
+    return stages.length ? Math.round((done / stages.length) * 100) : 0;
+  }
+
+  return (
+    <div className="min-h-screen">
+      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Link href={`/workspaces/${slug}`} className="text-gray-500 hover:text-gray-700">&larr; 返回空间</Link>
+          <h1 className="text-xl font-bold">交付项目</h1>
+        </div>
+        <Link
+          href={`/workspaces/${slug}/projects/new`}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
+        >
+          新建项目
+        </Link>
+      </header>
+
+      <main className="max-w-4xl mx-auto p-6">
+        {loading ? (
+          <p className="text-gray-500">加载中...</p>
+        ) : projects.length === 0 ? (
+          <div className="text-center py-20 text-gray-500">
+            <p className="text-lg mb-2">还没有项目</p>
+            <p className="text-sm mb-4">创建你的第一个交付项目来启动 13 步流程</p>
+            <Link href={`/workspaces/${slug}/projects/new`} className="text-blue-600 hover:underline text-sm">创建第一个项目</Link>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {projects.map((p) => (
+              <Link
+                key={p.id}
+                href={`/workspaces/${slug}/projects/${p.id}`}
+                className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow block"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="font-semibold text-lg">{p.name}</h3>
+                    {p.customer && <p className="text-sm text-gray-500">客户: {p.customer}</p>}
+                  </div>
+                  <span className={`text-xs px-2 py-1 rounded ${
+                    p.status === 'active' ? 'bg-green-100 text-green-700' :
+                    p.status === 'completed' ? 'bg-blue-100 text-blue-700' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>
+                    {p.status === 'active' ? '进行中' : p.status === 'completed' ? '已完成' : '已归档'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 bg-gray-100 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all"
+                      style={{ width: `${progress(p.stages)}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-500">{progress(p.stages)}%</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
