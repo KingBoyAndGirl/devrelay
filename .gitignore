@@ -28,9 +28,13 @@ npm-debug.log*
 .env.production.local
 
 # runtime data
-/data/devrelay.db
-/data/devrelay.db-wal
-/data/devrelay.db-shm
+/data/
 
 # drizzle
 /drizzle/meta
+
+# build
+tsconfig.tsbuildinfo
+
+# chorus
+.chorus/
