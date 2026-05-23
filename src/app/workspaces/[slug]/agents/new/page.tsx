@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AGENT_TYPES } from '@/lib/agents';
-import { ROLE_LABELS, ROLE_PERMISSIONS } from '@/types';
+import { ROLE_LABELS } from '@/types';
+import PermissionSelector from '@/components/agents/PermissionSelector';
+import type { Role } from '@/lib/permissions';
 
 interface DiscoveredCLI {
   bin: string;
@@ -203,31 +205,12 @@ export default function NewAgentPage() {
             </div>
           </div>
 
-          {/* Role permission card */}
-          {ROLE_PERMISSIONS[role] && (
-            <div className="border border-blue-200 rounded-lg p-3 bg-blue-50">
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`text-xs px-2 py-0.5 rounded font-medium ${ROLE_BADGES[role] || 'bg-gray-100 text-gray-600'}`}>
-                  {ROLE_LABELS[role]}
-                </span>
-                <span className="text-xs text-gray-500">此角色具有以下权限：</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div>
-                  <span className="text-gray-400">负责阶段：</span>
-                  <span className="text-gray-700 font-mono ml-1">{ROLE_PERMISSIONS[role].stages}</span>
-                </div>
-                <div className="flex flex-wrap gap-1 items-start">
-                  <span className="text-gray-400">能力：</span>
-                  {ROLE_PERMISSIONS[role].capabilities.map((cap, i) => (
-                    <span key={i} className="bg-white text-gray-600 px-1.5 py-0.5 rounded border border-gray-100">
-                      {cap}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Permission selector */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">权限配置</label>
+            <PermissionSelector role={role as Role} />
+            <p className="text-xs text-gray-400 mt-1">展开查看并按需调整角色权限</p>
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Agent 名称</label>

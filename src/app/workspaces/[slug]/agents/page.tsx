@@ -122,6 +122,12 @@ export default function AgentsPage() {
                       >
                         {agent.enabled ? '禁用' : '启用'}
                       </button>
+                      <Link
+                        href={`/workspaces/${slug}/agents/${agent.id}`}
+                        className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+                      >
+                        编辑
+                      </Link>
                       <button
                         onClick={() => setActiveRunner(activeRunner === agent.id ? null : agent.id)}
                         className="px-3 py-1.5 text-xs bg-gray-900 text-green-400 rounded-lg hover:bg-gray-800 font-mono"

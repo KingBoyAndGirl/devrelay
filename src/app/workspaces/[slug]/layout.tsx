@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import NotificationNavBadge from '@/components/notifications/NotificationNavBadge';
+import AgentActivityPanel from '@/components/agents/AgentActivityPanel';
 
 export default async function WorkspaceLayout({
   children,
@@ -34,6 +35,7 @@ export default async function WorkspaceLayout({
         <div className="px-4 py-4 border-b border-gray-100">
           <Link href="/" className="text-sm text-gray-500 hover:text-gray-700 block mb-1">&larr; 空间列表</Link>
           <h1 className="font-bold text-lg truncate">{ws.name}</h1>
+          <AgentActivityPanel slug={slug} />
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1">
@@ -42,7 +44,6 @@ export default async function WorkspaceLayout({
           <NavItem href={`/workspaces/${slug}/projects`} label="项目" />
           <NavItem href={`/workspaces/${slug}/agents`} label="Agent" />
           <NavItem href={`/workspaces/${slug}/notifications`} label="通知" badge={<NotificationNavBadge />} />
-          <NavItem href={`/workspaces/${slug}/permissions`} label="权限" />
           <NavItem href={`/workspaces/${slug}/settings`} label="设置" />
         </nav>
 

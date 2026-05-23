@@ -4,20 +4,19 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AgentRunner from '@/components/agents/AgentRunner';
-import { ROLE_LABELS, ROLE_PERMISSIONS, STAGE_NAMES } from '@/types';
+import { ROLE_LABELS, STAGE_NAMES } from '@/types';
 import { AGENT_TYPES } from '@/lib/agents';
+import PermissionSelector from '@/components/agents/PermissionSelector';
+import { getDefaultPermissions, PERMISSIONS, ROLE_BADGES, type Role } from '@/lib/permissions';
+
+const PERM_LABEL_MAP: Record<string, string> = Object.fromEntries(
+  PERMISSIONS.flatMap(area => area.items.map(item => [item.id, item.label]))
+);
 
 const ROLE_OPTIONS = Object.entries(ROLE_LABELS)
   .filter(([key]) => key !== 'admin')
   .map(([key, label]) => ({ value: key, label }));
 
-const ROLE_BADGES: Record<string, string> = {
-  pm: 'bg-yellow-100 text-yellow-700',
-  architect: 'bg-purple-100 text-purple-700',
-  developer: 'bg-blue-100 text-blue-700',
-  qa: 'bg-green-100 text-green-700',
-  delivery_manager: 'bg-orange-100 text-orange-700',
-};
 
 interface TaskItem {
   id: string;
@@ -225,28 +224,14 @@ export default function AgentDetailPage() {
                 <select
                   value={editRole}
                   onChange={(e) => setEditRole(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"
                 >
                   {ROLE_OPTIONS.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
-                {ROLE_PERMISSIONS[editRole] && (
-                  <div className="mt-2 border border-blue-200 rounded-lg p-3 bg-blue-50">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${ROLE_BADGES[editRole] || 'bg-gray-100 text-gray-600'}`}>
-                        {ROLE_LABELS[editRole]}
-                      </span>
-                      <span className="text-xs text-gray-500">权限：</span>
-                      <span className="text-xs text-gray-700 font-mono">{ROLE_PERMISSIONS[editRole].stages}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {ROLE_PERMISSIONS[editRole].capabilities.map((cap, i) => (
-                        <span key={i} className="text-xs bg-white text-gray-600 px-1.5 py-0.5 rounded border border-gray-100">{cap}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <label className="block text-xs font-medium text-gray-500 mb-1">权限配置</label>
+                <PermissionSelector role={editRole as Role} />
               </div>
 
               <div>
@@ -342,24 +327,16 @@ export default function AgentDetailPage() {
                 </div>
               </div>
 
-              {ROLE_PERMISSIONS[agent.role] && (
-                <div className="mt-4 pt-4 border-t border-gray-100">
-                  <h4 className="text-xs font-medium text-gray-500 mb-2">角色权限</h4>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <span className="text-gray-400">负责阶段：</span>
-                      <span className="text-gray-700 font-mono">{ROLE_PERMISSIONS[agent.role].stages}</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1 items-start">
-                      {ROLE_PERMISSIONS[agent.role].capabilities.map((cap, i) => (
-                        <span key={i} className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">
-                          {cap}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <h4 className="text-xs font-medium text-gray-500 mb-2">角色权限</h4>
+                <div className="flex flex-wrap gap-1">
+                  {getDefaultPermissions(agent.role as Role).map((permId) => (
+                    <span key={permId} className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs border border-blue-100">
+                      {PERM_LABEL_MAP[permId] || permId}
+                    </span>
+                  ))}
                 </div>
-              )}
+              </div>
 
               <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-100 text-sm">
                 <div>
