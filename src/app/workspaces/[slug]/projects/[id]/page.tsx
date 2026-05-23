@@ -136,6 +136,12 @@ export default function ProjectDetailPage() {
           >
             任务看板
           </Link>
+          <Link
+            href={`/workspaces/${slug}/projects/${id}/prs`}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            Pull Requests
+          </Link>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex-1 bg-gray-200 rounded-full h-3">

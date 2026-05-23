@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { SignOutButton } from '@/components/auth/SignOutButton';
+import NotificationBell from '@/components/notifications/NotificationBell';
 
 export default async function HomePage() {
   const session = await auth();
@@ -23,6 +24,7 @@ export default async function HomePage() {
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">DevRelay</h1>
         <div className="flex items-center gap-4">
+          <NotificationBell />
           <span className="text-sm text-gray-600">{session.user?.name}</span>
           <SignOutButton />
         </div>
