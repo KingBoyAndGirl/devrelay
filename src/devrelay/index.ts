@@ -14,12 +14,14 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { spawn, execSync, ChildProcess } from 'child_process';
+import { spawn, execSync, fork, ChildProcess } from 'child_process';
 import { randomBytes } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
+
+const PID_FILE = join(homedir(), '.devrelay', 'agent.pid');
 
 // ── Config File ──────────────────────────────────────────────────
 
@@ -216,6 +218,7 @@ function cmdHelp() {
 
   Commands:
     start               Start the agent server (default)
+    start --daemon       Start in background
     stop                Stop the running agent
     restart             Restart the agent server
     configure           Interactive setup (token, server URL, port)
@@ -227,10 +230,11 @@ function cmdHelp() {
     --token <string>    Agent authentication token
     --url <string>      DevRelay server URL
     --port <number>     Agent listening port (default: 4100)
+    --daemon            Run in background (for start/restart)
 
   Examples:
     devrelay configure --token abc123 --url https://devrelay.example.com
-    devrelay start
+    devrelay start --daemon
     devrelay restart
     devrelay status
 
@@ -251,16 +255,43 @@ function getPortPid(port: number): number | null {
 
 function cmdStop() {
   const cfg = resolveConfig();
-  const pid = getPortPid(cfg.port);
+  // Try PID file first, then port detection
+  let pid: number | null = null;
+  if (existsSync(PID_FILE)) {
+    try { pid = parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10); } catch {}
+  }
+  if (!pid) pid = getPortPid(cfg.port);
   if (!pid) {
-    console.log(`[devrelay] No process found on port ${cfg.port}`);
+    console.log(`[devrelay] No agent process found`);
     return;
   }
   try {
     process.kill(pid, 'SIGTERM');
-    console.log(`[devrelay] Stopped agent (pid ${pid}) on port ${cfg.port}`);
+    console.log(`[devrelay] Stopped agent (pid ${pid})`);
+    try { unlinkSync(PID_FILE); } catch {}
   } catch (err: any) {
     console.error(`[devrelay] Failed to stop pid ${pid}: ${err.message}`);
+  }
+}
+
+function startDaemon(flags: Record<string, string>) {
+  const cfg = resolveConfig();
+  if (flags.port) cfg.port = parseInt(flags.port, 10);
+  const port = cfg.port;
+  // Kill existing process if any
+  const pid = getPortPid(port);
+  if (pid) {
+    try { process.kill(pid, 'SIGTERM'); } catch {}
+  }
+  const child = fork(process.argv[1], ['start', '--port', String(port)], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  if (child.pid) {
+    if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
+    writeFileSync(PID_FILE, String(child.pid));
+    console.log(`[devrelay] Agent started in background (pid ${child.pid}) on port ${port}`);
   }
 }
 
@@ -295,7 +326,11 @@ switch (command) {
     cmdStop();
     break;
   case 'restart':
-    cmdRestart(flags);
+    if (flags.daemon) {
+      startDaemon(flags);
+    } else {
+      cmdRestart(flags);
+    }
     break;
   case 'help':
   case '--help':
@@ -304,7 +339,11 @@ switch (command) {
     break;
   case 'start':
   default:
-    startServer(flags);
+    if (flags.daemon) {
+      startDaemon(flags);
+    } else {
+      startServer(flags);
+    }
     break;
 }
 
