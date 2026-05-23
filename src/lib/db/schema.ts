@@ -222,6 +222,18 @@ export const notifications = sqliteTable('notifications', {
   createdAt: text('created_at').notNull(),
 });
 
+// ===== Comments =====
+export const comments = sqliteTable('comments', {
+  id:        text('id').primaryKey(),
+  projectId: text('project_id').notNull().references(() => projects.id),
+  userId:    text('user_id').notNull(),
+  userName:  text('user_name'),
+  content:   text('content').notNull(),
+  stageId:   text('stage_id'),
+  taskId:    text('task_id'),
+  createdAt: text('created_at').notNull(),
+});
+
 // ===== Activity =====
 export const activities = sqliteTable('activities', {
   id:          text('id').primaryKey(),

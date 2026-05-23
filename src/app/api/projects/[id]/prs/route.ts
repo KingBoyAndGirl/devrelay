@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { projects, projectRepos, repositories, pullRequests } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { projects, projectRepos, repositories, pullRequests, stages } from '@/lib/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 import { createOctokit } from '@/lib/github';
-import { notifyStageTransition } from '@/lib/notify';
 
 export async function GET(
   _req: NextRequest,
@@ -87,6 +86,12 @@ export async function POST(
     });
 
     const now = new Date().toISOString();
+
+    // Find code review stage (step 8) to link the PR
+    const reviewStage = await db.query.stages.findFirst({
+      where: and(eq(stages.projectId, params.id), eq(stages.step, 8)),
+    });
+
     const prId = createId();
 
     await db.insert(pullRequests).values({
@@ -99,15 +104,23 @@ export async function POST(
       sourceBranch: pr.head.ref,
       targetBranch: pr.base.ref,
       commitSha: pr.head.sha,
-      devrelayStageId: null, // Will be linked to stage 8 if present
+      devrelayStageId: reviewStage?.id || null,
       createdAt: pr.created_at,
       updatedAt: pr.updated_at,
     });
+
+    // Set code review stage to in_progress when a PR is created
+    if (reviewStage && reviewStage.status === 'pending') {
+      await db.update(stages)
+        .set({ status: 'in_progress', startedAt: now })
+        .where(eq(stages.id, reviewStage.id));
+    }
 
     return NextResponse.json({
       id: prId,
       prNumber: pr.number,
       url: pr.html_url,
+      devrelayStageId: reviewStage?.id || null,
     }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: `Failed to create PR: ${(err as Error).message}` }, { status: 500 });

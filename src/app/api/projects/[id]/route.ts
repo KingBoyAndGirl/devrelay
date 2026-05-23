@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { projects, stages } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { projects, stages, pullRequests } from '@/lib/db/schema';
+import { eq, inArray } from 'drizzle-orm';
 
 export async function GET(
   _req: NextRequest,
@@ -28,7 +28,35 @@ export async function GET(
   // Sort stages by step
   project.stages.sort((a, b) => a.step - b.step);
 
-  return NextResponse.json(project);
+  // Fetch linked PRs for all stages
+  const stageIds = project.stages.map(s => s.id);
+  const linkedPRs = stageIds.length > 0
+    ? await db.query.pullRequests.findMany({
+        where: inArray(pullRequests.devrelayStageId, stageIds),
+      })
+    : [];
+
+  // Attach PRs to their stages
+  const prsByStage: Record<string, Array<typeof linkedPRs[0]>> = {};
+  for (const pr of linkedPRs) {
+    if (pr.devrelayStageId) {
+      (prsByStage[pr.devrelayStageId] ||= []).push(pr);
+    }
+  }
+
+  const stagesWithPRs = project.stages.map(s => ({
+    ...s,
+    linkedPRs: (prsByStage[s.id] || []).map(p => ({
+      id: p.id,
+      prNumber: p.prNumber,
+      title: p.title,
+      state: p.state || 'open',
+      sourceBranch: p.sourceBranch,
+      targetBranch: p.targetBranch,
+    })),
+  }));
+
+  return NextResponse.json({ ...project, stages: stagesWithPRs });
 }
 
 export async function PUT(

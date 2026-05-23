@@ -4,6 +4,15 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 
+interface LinkedPR {
+  id: string;
+  prNumber: number;
+  title: string;
+  state: string;
+  sourceBranch: string | null;
+  targetBranch: string | null;
+}
+
 interface Stage {
   id: string;
   step: number;
@@ -12,6 +21,16 @@ interface Stage {
   reviewNotes: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  linkedPRs: LinkedPR[];
+}
+
+interface Comment {
+  id: string;
+  userId: string;
+  userName: string | null;
+  content: string;
+  stageId: string | null;
+  createdAt: string;
 }
 
 interface Project {
@@ -54,6 +73,10 @@ export default function ProjectDetailPage() {
   const [acting, setActing] = useState<number | null>(null);
   const [rejectNotes, setRejectNotes] = useState('');
   const [showReject, setShowReject] = useState<number | null>(null);
+  const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
+  const [comments, setComments] = useState<Record<string, Comment[]>>({});
+  const [commentText, setCommentText] = useState<Record<string, string>>({});
+  const [submittingComment, setSubmittingComment] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetchProject();
@@ -88,6 +111,37 @@ export default function ProjectDetailPage() {
     setShowReject(null);
     setRejectNotes('');
     fetchProject();
+  }
+
+  async function toggleComments(stageId: string) {
+    const next = new Set(expandedComments);
+    if (next.has(stageId)) {
+      next.delete(stageId);
+    } else {
+      next.add(stageId);
+      if (!comments[stageId]) {
+        const res = await fetch(`/api/projects/${id}/comments?stageId=${stageId}`);
+        const data = await res.json();
+        setComments(prev => ({ ...prev, [stageId]: data }));
+      }
+    }
+    setExpandedComments(next);
+  }
+
+  async function handlePostComment(stageId: string) {
+    const text = commentText[stageId];
+    if (!text?.trim()) return;
+    setSubmittingComment(prev => ({ ...prev, [stageId]: true }));
+    await fetch(`/api/projects/${id}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text, stageId }),
+    });
+    setSubmittingComment(prev => ({ ...prev, [stageId]: false }));
+    setCommentText(prev => ({ ...prev, [stageId]: '' }));
+    const res = await fetch(`/api/projects/${id}/comments?stageId=${stageId}`);
+    const data = await res.json();
+    setComments(prev => ({ ...prev, [stageId]: data }));
   }
 
   if (loading) {
@@ -186,6 +240,69 @@ export default function ProjectDetailPage() {
                   )}
                   {stage.reviewNotes && (
                     <p className="text-sm text-red-600 mt-2 bg-red-50 rounded p-2">{stage.reviewNotes}</p>
+                  )}
+                  {stage.linkedPRs.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {stage.linkedPRs.map(pr => (
+                        <div key={pr.id} className="text-xs flex items-center gap-2 bg-white rounded px-2 py-1 border border-gray-200">
+                          <span className="font-mono text-gray-500">#{pr.prNumber}</span>
+                          <span className="truncate">{pr.title}</span>
+                          <span className={`px-1 rounded ${
+                            pr.state === 'open' ? 'bg-green-100 text-green-700' :
+                            pr.state === 'merged' ? 'bg-purple-100 text-purple-700' :
+                            'bg-red-100 text-red-700'
+                          }`}>
+                            {pr.state === 'open' ? 'open' : pr.state === 'merged' ? 'merged' : pr.state}
+                          </span>
+                          {pr.sourceBranch && (
+                            <span className="font-mono text-gray-400">{pr.sourceBranch}→{pr.targetBranch}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Comments section */}
+                  <button
+                    onClick={() => toggleComments(stage.id)}
+                    className="text-xs text-gray-400 hover:text-gray-600 mt-2 flex items-center gap-1"
+                  >
+                    <span>讨论</span>
+                    {expandedComments.has(stage.id) ? '▲' : '▼'}
+                  </button>
+
+                  {expandedComments.has(stage.id) && (
+                    <div className="mt-2 space-y-2">
+                      {(comments[stage.id] || []).map(c => (
+                        <div key={c.id} className="bg-white rounded px-3 py-2 border border-gray-100">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-medium">{c.userName || c.userId}</span>
+                            <span className="text-xs text-gray-400">{new Date(c.createdAt).toLocaleString('zh-CN')}</span>
+                          </div>
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{c.content}</p>
+                        </div>
+                      ))}
+                      {(!comments[stage.id] || comments[stage.id].length === 0) && (
+                        <p className="text-xs text-gray-400">暂无评论</p>
+                      )}
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={commentText[stage.id] || ''}
+                          onChange={(e) => setCommentText(prev => ({ ...prev, [stage.id]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handlePostComment(stage.id); }}
+                          placeholder="添加评论..."
+                          className="flex-1 px-2 py-1 text-sm border border-gray-200 rounded"
+                        />
+                        <button
+                          onClick={() => handlePostComment(stage.id)}
+                          disabled={submittingComment[stage.id]}
+                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {submittingComment[stage.id] ? '...' : '发送'}
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
                 {stage.status === 'in_progress' && (
