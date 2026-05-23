@@ -1,6 +1,7 @@
 import type { NextAuthOptions } from 'next-auth';
 import { getServerSession } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
+import GitHubProvider from 'next-auth/providers/github';
 import bcrypt from 'bcryptjs';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db/client';
@@ -40,12 +41,48 @@ export const authOptions: NextAuthOptions = {
         };
       },
     }),
+    ...(config.github.clientId ? [GitHubProvider({
+      clientId: config.github.clientId,
+      clientSecret: config.github.clientSecret,
+    })] : []),
   ],
   session: { strategy: 'jwt' },
   pages: {
     signIn: '/login',
   },
   callbacks: {
+    async signIn({ user, account, profile }) {
+      if (account?.provider === 'github') {
+        // Auto-create user on first GitHub login
+        const githubName = (profile as any)?.login || user.name || user.email?.split('@')[0] || 'github-user';
+        const username = githubName.toLowerCase();
+
+        let existing = await db.query.users.findFirst({
+          where: eq(users.username, username),
+        });
+
+        if (!existing) {
+          const now = new Date().toISOString();
+          await db.insert(users).values({
+            id: createId(),
+            username,
+            passwordHash: '', // GitHub login only
+            displayName: user.name || githubName,
+            isAdmin: false,
+            createdAt: now,
+            updatedAt: now,
+          });
+          existing = await db.query.users.findFirst({
+            where: eq(users.username, username),
+          });
+        }
+
+        if (existing) {
+          user.id = existing.id;
+        }
+      }
+      return true;
+    },
     async jwt({ token, user }) {
       if (user) {
         token.userId = user.id;
