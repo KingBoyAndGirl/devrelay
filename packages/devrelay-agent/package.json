@@ -1,0 +1,30 @@
+{
+  "name": "devrelay-agent",
+  "version": "0.1.0",
+  "description": "DevRelay Agent — AI CLI execution sidecar. Runs on your host machine to execute Claude Code, Codex, and other AI CLIs.",
+  "license": "AGPL-3.0",
+  "bin": {
+    "devrelay-agent": "index.ts"
+  },
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.19.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "devrelay",
+    "ai-agent",
+    "claude-code",
+    "codex",
+    "cli-runner",
+    "mcp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KingBoyAndGirl/devrelay"
+  }
+}

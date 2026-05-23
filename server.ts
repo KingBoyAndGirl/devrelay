@@ -8,7 +8,7 @@ import { config } from './src/lib/config';
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
-const sidecarPort = parseInt(process.env.AGENT_RUNNER_PORT || '4100', 10);
+const sidecarPort = parseInt(process.env.DEVRELAY_AGENT_PORT || '4100', 10);
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
@@ -18,10 +18,10 @@ let sidecarRestarts = 0;
 function startSidecar(): ChildProcess | null {
   if (process.env.NO_SIDECAR) return null;
 
-  const child = spawn('npx', ['tsx', 'src/agent-runner/index.ts'], {
+  const child = spawn('npx', ['tsx', 'src/devrelay-agent/index.ts'], {
     env: {
       ...process.env,
-      AGENT_RUNNER_PORT: String(sidecarPort),
+      DEVRELAY_AGENT_PORT: String(sidecarPort),
     },
     stdio: 'pipe',
   });

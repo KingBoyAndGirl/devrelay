@@ -1,11 +1,11 @@
 #!/usr/bin/env -S npx tsx
 /**
- * Agent Runner Sidecar
+ * DevRelay Agent
  *
- * Standalone HTTP process that manages AI CLI execution.
- * Runs independently from Next.js — start with:
- *   npx tsx src/agent-runner/index.ts
- *   or: pm2 start src/agent-runner/index.ts --name agent-runner
+ * Standalone host-side process that manages AI CLI execution.
+ * Runs independently from the DevRelay server — install & start with:
+ *   npx devrelay-agent
+ *   or: npm install -g devrelay-agent && devrelay-agent
  *
  * Endpoints:
  *   GET  /health            — health check
@@ -24,10 +24,10 @@ import { randomBytes } from 'crypto';
 
 // ── Config ───────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.AGENT_RUNNER_PORT || '4100', 10);
-const MAX_CONCURRENT = parseInt(process.env.AGENT_RUNNER_MAX_CONCURRENT || '3', 10);
-const DEFAULT_TIMEOUT_MS = parseInt(process.env.AGENT_RUNNER_TIMEOUT || '600000', 10);
-const HEARTBEAT_MS = parseInt(process.env.AGENT_RUNNER_HEARTBEAT || '120000', 10);
+const PORT = parseInt(process.env.DEVRELAY_AGENT_PORT || '4100', 10);
+const MAX_CONCURRENT = parseInt(process.env.DEVRELAY_AGENT_MAX_CONCURRENT || '3', 10);
+const DEFAULT_TIMEOUT_MS = parseInt(process.env.DEVRELAY_AGENT_TIMEOUT || '600000', 10);
+const HEARTBEAT_MS = parseInt(process.env.DEVRELAY_AGENT_HEARTBEAT || '120000', 10);
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 // ── CLI Discovery ────────────────────────────────────────────────
@@ -269,7 +269,7 @@ function handleNotFound(_req: IncomingMessage, res: ServerResponse) {
 
 // ── MCP (Model Context Protocol) ─────────────────────────────────
 
-const SERVER_NAME = 'agent-runner';
+const SERVER_NAME = 'devrelay-agent';
 const SERVER_VERSION = '1.0.0';
 
 interface JSONRPCRequest {
@@ -506,14 +506,14 @@ function readBody(req: IncomingMessage): Promise<string> {
 server.listen(PORT, () => {
   const clis = discoverCLIs();
   const found = clis.filter((c) => c.found);
-  console.log(`[agent-runner] listening on http://localhost:${PORT}`);
-  console.log(`[agent-runner] max concurrent: ${MAX_CONCURRENT}, timeout: ${DEFAULT_TIMEOUT_MS}ms, heartbeat: ${HEARTBEAT_MS}ms`);
-  console.log(`[agent-runner] detected ${found.length}/${clis.length} CLIs: ${found.map(c => c.bin).join(', ') || 'none'}`);
+  console.log(`[devrelay-agent] listening on http://localhost:${PORT}`);
+  console.log(`[devrelay-agent] max concurrent: ${MAX_CONCURRENT}, timeout: ${DEFAULT_TIMEOUT_MS}ms, heartbeat: ${HEARTBEAT_MS}ms`);
+  console.log(`[devrelay-agent] detected ${found.length}/${clis.length} CLIs: ${found.map(c => c.bin).join(', ') || 'none'}`);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('[agent-runner] shutting down...');
+  console.log('[devrelay-agent] shutting down...');
   executions.forEach((exec) => {
     exec.process.kill('SIGTERM');
   });

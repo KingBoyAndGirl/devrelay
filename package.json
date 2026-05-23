@@ -12,7 +12,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "agent-runner": "tsx src/agent-runner/index.ts"
+    "agent-runner": "tsx src/devrelay-agent/index.ts",
+    "devrelay-agent": "tsx src/devrelay-agent/index.ts",
+    "agent:sync": "cp src/devrelay-agent/index.ts packages/devrelay-agent/index.ts",
+    "agent:publish": "npm run agent:sync && cd packages/devrelay-agent && npm publish"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
@@ -29,6 +32,7 @@
     "simple-git": "^3.36.0",
     "socket.io": "^4.8.0",
     "socket.io-client": "^4.8.0",
+    "tsx": "^4.19.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
@@ -41,7 +45,6 @@
     "eslint-config-next": "^14.2.0",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.5.0"
   }
 }

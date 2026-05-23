@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# DevRelay Agent — One-click install script
+# Usage: curl -fsSL https://raw.githubusercontent.com/KingBoyAndGirl/devrelay/main/scripts/install-agent.sh | bash
+
+BOLD='\033[1m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+info()  { echo -e "${GREEN}[devrelay]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[devrelay]${NC} $*"; }
+error() { echo -e "${RED}[devrelay]${NC} $*"; exit 1; }
+
+# ── Check prerequisites ──────────────────────────────────────────
+
+check_node() {
+  if ! command -v node &>/dev/null; then
+    error "Node.js not found. Install Node.js 18+ first: https://nodejs.org"
+  fi
+
+  local major
+  major=$(node -v | sed 's/v//' | cut -d. -f1)
+  if [ "$major" -lt 18 ]; then
+    error "Node.js $major detected, but 18+ is required. Please upgrade."
+  fi
+
+  info "Node.js $(node -v) ✓"
+}
+
+check_npm() {
+  if ! command -v npm &>/dev/null; then
+    error "npm not found. It usually comes with Node.js."
+  fi
+  info "npm $(npm -v) ✓"
+}
+
+# ── Install ──────────────────────────────────────────────────────
+
+install_agent() {
+  info "Installing devrelay-agent globally..."
+  npm install -g devrelay-agent 2>/dev/null || {
+    warn "Global install failed, trying with sudo..."
+    sudo npm install -g devrelay-agent
+  }
+  info "devrelay-agent installed ✓"
+}
+
+# ── Detect AI CLIs ───────────────────────────────────────────────
+
+detect_clis() {
+  info "Detecting AI CLI tools on this machine..."
+  local found=0
+  local clis=("claude" "codex" "copilot" "hermes" "gemini" "cursor-agent")
+
+  for cli in "${clis[@]}"; do
+    if command -v "$cli" &>/dev/null; then
+      local ver
+      ver=$("$cli" --version 2>&1 | head -1 | cut -c1-40 || echo "installed")
+      echo -e "  ${GREEN}✓${NC} $cli  ($ver)"
+      ((found++))
+    else
+      echo -e "  ${YELLOW}○${NC} $cli  (not installed)"
+    fi
+  done
+
+  if [ "$found" -eq 0 ]; then
+    warn "No AI CLI tools detected. Install at least one (e.g. claude, codex) to use DevRelay."
+  else
+    info "Found $found AI CLI tool(s) ✓"
+  fi
+}
+
+# ── Systemd service (optional) ───────────────────────────────────
+
+setup_systemd() {
+  if [ "$(uname)" != "Linux" ]; then
+    info "Skipping systemd setup (not Linux)."
+    return
+  fi
+
+  if ! command -v systemctl &>/dev/null; then
+    info "Skipping systemd setup (systemctl not found)."
+    return
+  fi
+
+  read -rp "$(echo -e "${BOLD}Install as systemd service? [y/N]: ${NC}")" answer
+  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+    info "Skipped. Start manually with: devrelay-agent"
+    return
+  fi
+
+  local agent_bin
+  agent_bin=$(command -v devrelay-agent)
+
+  sudo tee /etc/systemd/system/devrelay-agent.service > /dev/null <<EOF
+[Unit]
+Description=DevRelay Agent — AI CLI execution sidecar
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${agent_bin}
+Restart=on-failure
+RestartSec=5
+Environment=DEVRELAY_AGENT_PORT=4100
+Environment=DEVRELAY_AGENT_MAX_CONCURRENT=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable devrelay-agent
+  sudo systemctl start devrelay-agent
+
+  info "devrelay-agent service installed and started ✓"
+  echo -e "  Check status: ${BOLD}systemctl status devrelay-agent${NC}"
+  echo -e "  View logs:    ${BOLD}journalctl -u devrelay-agent -f${NC}"
+}
+
+# ── Print summary ────────────────────────────────────────────────
+
+print_summary() {
+  echo ""
+  echo -e "${BOLD}══════════════════════════════════════════════${NC}"
+  echo -e "${GREEN}  DevRelay Agent installed successfully!${NC}"
+  echo -e "${BOLD}══════════════════════════════════════════════${NC}"
+  echo ""
+  echo -e "  Start:        ${BOLD}devrelay-agent${NC}"
+  echo -e "  Health check: ${BOLD}curl http://localhost:4100/health${NC}"
+  echo -e "  Discover CLIs:${BOLD}curl http://localhost:4100/discover${NC}"
+  echo ""
+  echo -e "  Environment variables:"
+  echo -e "    DEVRELAY_AGENT_PORT=4100          (default port)"
+  echo -e "    DEVRELAY_AGENT_MAX_CONCURRENT=3   (max parallel agents)"
+  echo -e "    DEVRELAY_AGENT_TIMEOUT=600000     (execution timeout ms)"
+  echo ""
+  echo -e "  Connect to DevRelay server:"
+  echo -e "    Set ${BOLD}DEVRELAY_AGENT_URL=http://<this-host>:4100${NC}"
+  echo -e "    in your DevRelay server's environment."
+  echo ""
+}
+
+# ── Main ─────────────────────────────────────────────────────────
+
+main() {
+  echo ""
+  echo -e "${BOLD}DevRelay Agent Installer${NC}"
+  echo -e "AI CLI execution sidecar for DevRelay"
+  echo ""
+
+  check_node
+  check_npm
+  echo ""
+  install_agent
+  echo ""
+  detect_clis
+  echo ""
+  setup_systemd
+  print_summary
+}
+
+main "$@"

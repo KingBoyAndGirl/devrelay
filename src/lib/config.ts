@@ -16,6 +16,6 @@ export const config = {
     claudeCodePath: process.env.CLAUDE_CODE_PATH || 'claude',
     codexPath: process.env.CODEX_PATH || 'codex',
     hermesPath: process.env.HERMES_PATH || 'hermes',
-    sidecarUrl: process.env.AGENT_RUNNER_URL || 'http://localhost:4100',
+    sidecarUrl: process.env.DEVRELAY_AGENT_URL || 'http://localhost:4100',
   },
 };
