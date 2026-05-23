@@ -178,18 +178,25 @@ async function cmdTest() {
   console.log(`[devrelay-agent] Testing connection to ${config.serverUrl}...`);
 
   try {
-    const res = await fetch(`${config.serverUrl}/api/workspaces`, {
+    const res = await fetch(`${config.serverUrl}/api/agent/verify`, {
       headers: { Authorization: `Bearer ${config.token}` },
       signal: AbortSignal.timeout(5000),
     });
 
     if (res.ok) {
-      console.log('[devrelay-agent] Connection successful ✓');
+      const data = await res.json();
+      console.log('[devrelay-agent] Connection successful');
       console.log(`  Server responded: HTTP ${res.status}`);
+      if (data.workspace) {
+        console.log(`  Workspace:    ${data.workspace.name} (${data.workspace.slug})`);
+      }
     } else {
+      const data = await res.json().catch(() => ({}));
       console.log(`[devrelay-agent] Server responded: HTTP ${res.status}`);
       if (res.status === 401) {
-        console.log('  Token may be invalid. Check your configuration.');
+        console.log('  Token is invalid. Generate a new one in the workspace settings page.');
+      } else {
+        console.log('  ' + (data.error || 'Unknown error'));
       }
     }
   } catch (err: any) {
@@ -249,14 +256,15 @@ switch (command) {
     break;
   case 'start':
   default:
-    startServer();
+    startServer(flags);
     break;
 }
 
 // ── Server ───────────────────────────────────────────────────────
 
-function startServer() {
+function startServer(flags: Record<string, string> = {}) {
   const cfg = resolveConfig();
+  if (flags.port) cfg.port = parseInt(flags.port, 10);
   const PORT = cfg.port;
   const AUTH_TOKEN = cfg.token;
   const MAX_CONCURRENT = cfg.maxConcurrent;

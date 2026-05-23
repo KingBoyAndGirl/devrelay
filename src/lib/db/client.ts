@@ -19,6 +19,7 @@ export async function initializeDatabase() {
     `ALTER TABLE agents ADD COLUMN git_name TEXT`,
     `ALTER TABLE agents ADD COLUMN git_email TEXT`,
     `ALTER TABLE stages ADD COLUMN required_role TEXT`,
+    `ALTER TABLE workspaces ADD COLUMN settings TEXT`,
   ];
 
   for (const sql of migrations) {
