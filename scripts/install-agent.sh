@@ -40,10 +40,10 @@ check_npm() {
 # ── Install ──────────────────────────────────────────────────────
 
 install_agent() {
-  info "Installing devrelay-agent globally..."
-  npm install -g devrelay-agent 2>/dev/null || {
+  info "Installing devrelay globally..."
+  npm install -g devrelay 2>/dev/null || {
     warn "Global install failed, trying with sudo..."
-    sudo npm install -g devrelay-agent
+    sudo npm install -g devrelay
   }
   info "devrelay installed ✓"
 }

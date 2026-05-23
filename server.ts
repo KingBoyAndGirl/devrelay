@@ -18,7 +18,7 @@ let sidecarRestarts = 0;
 function startSidecar(): ChildProcess | null {
   if (process.env.NO_SIDECAR) return null;
 
-  const child = spawn('npx', ['tsx', 'src/devrelay-agent/index.ts'], {
+  const child = spawn('npx', ['tsx', 'src/devrelay/index.ts'], {
     env: {
       ...process.env,
       DEVRELAY_AGENT_PORT: String(sidecarPort),
