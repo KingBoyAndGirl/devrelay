@@ -840,6 +840,16 @@ function startServer(flags: Record<string, string> = {}) {
     console.log(`[devrelay] ========================================\n`);
   });
 
+  // Heartbeat: re-verify token to keep online status fresh
+  if (AUTH_TOKEN && cfg.serverUrl) {
+    setInterval(() => {
+      fetch(`${cfg.serverUrl}/api/agent/verify`, {
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {});
+    }, 60_000);
+  }
+
   process.on('SIGTERM', () => {
     console.log('[devrelay] shutting down...');
     executions.forEach((exec) => exec.process.kill('SIGTERM'));

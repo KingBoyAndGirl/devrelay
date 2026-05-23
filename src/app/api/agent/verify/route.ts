@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db/client';
 import { workspaces } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
@@ -13,12 +14,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Empty token' }, { status: 401 });
   }
 
-  // Find workspace with matching agent token
   const allWorkspaces = await db.query.workspaces.findMany();
   for (const ws of allWorkspaces) {
     try {
       const settings = ws.settings ? JSON.parse(ws.settings) : {};
-      if (settings.agentToken === token) {
+      const tokens: any[] = settings.agentTokens || [];
+
+      // Check multi-token array
+      const match = tokens.find((t: any) => t.token === token);
+      // Also check legacy single token
+      const legacyMatch = !match && settings.agentToken === token;
+
+      if (match || legacyMatch) {
+        // Update lastSeenAt
+        if (match) {
+          match.lastSeenAt = new Date().toISOString();
+          await db.update(workspaces)
+            .set({ settings: JSON.stringify(settings), updatedAt: new Date().toISOString() })
+            .where(eq(workspaces.id, ws.id));
+        }
+
         return NextResponse.json({
           valid: true,
           workspace: {
