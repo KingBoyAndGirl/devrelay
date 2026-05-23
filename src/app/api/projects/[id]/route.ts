@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { projects, stages, pullRequests } from '@/lib/db/schema';
+import { projects, stages, pullRequests, deployments, feedback } from '@/lib/db/schema';
 import { eq, inArray } from 'drizzle-orm';
 
 export async function GET(
@@ -56,7 +56,25 @@ export async function GET(
     })),
   }));
 
-  return NextResponse.json({ ...project, stages: stagesWithPRs });
+  // Fetch latest deployment and recent feedback
+  const [latestDeploy, feedbackItems] = await Promise.all([
+    db.query.deployments.findFirst({
+      where: eq(deployments.projectId, params.id),
+      orderBy: (deployments, { desc }) => [desc(deployments.createdAt)],
+    }),
+    db.query.feedback.findMany({
+      where: eq(feedback.projectId, params.id),
+      orderBy: (feedback, { desc }) => [desc(feedback.createdAt)],
+      limit: 5,
+    }),
+  ]);
+
+  return NextResponse.json({
+    ...project,
+    stages: stagesWithPRs,
+    latestDeployment: latestDeploy || null,
+    recentFeedback: feedbackItems,
+  });
 }
 
 export async function PUT(

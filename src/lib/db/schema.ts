@@ -246,3 +246,32 @@ export const activities = sqliteTable('activities', {
   metadata:    text('metadata'),
   createdAt:   text('created_at').notNull(),
 });
+
+// ===== Deployments =====
+export const deployments = sqliteTable('deployments', {
+  id:          text('id').primaryKey(),
+  projectId:   text('project_id').notNull().references(() => projects.id),
+  stageId:     text('stage_id'),
+  version:     text('version'),
+  environment: text('environment').default('production'),
+  status:      text('status').notNull().default('pending'), // pending / deploying / success / failed
+  log:         text('log'),
+  deployedAt:  text('deployed_at'),
+  createdAt:   text('created_at').notNull(),
+});
+
+// ===== Feedback =====
+export const feedback = sqliteTable('feedback', {
+  id:          text('id').primaryKey(),
+  projectId:   text('project_id').notNull().references(() => projects.id),
+  stageId:     text('stage_id'),
+  type:        text('type').notNull().default('feedback'), // feedback / bug / incident / improvement
+  title:       text('title').notNull(),
+  description: text('description'),
+  severity:    text('severity').default('medium'), // low / medium / high / critical
+  status:      text('status').notNull().default('open'), // open / acknowledged / resolved / closed
+  reportedBy:  text('reported_by'),
+  assignedTo:  text('assigned_to'),
+  createdAt:   text('created_at').notNull(),
+  updatedAt:   text('updated_at').notNull(),
+});

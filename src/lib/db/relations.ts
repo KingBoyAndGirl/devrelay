@@ -19,6 +19,8 @@ import {
   notifications,
   activities,
   comments,
+  deployments,
+  feedback,
 } from './schema';
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -168,6 +170,20 @@ export const linkedCommitsRelations = relations(linkedCommits, ({ one }) => ({
 export const commentsRelations = relations(comments, ({ one }) => ({
   project: one(projects, {
     fields: [comments.projectId],
+    references: [projects.id],
+  }),
+}));
+
+export const deploymentsRelations = relations(deployments, ({ one }) => ({
+  project: one(projects, {
+    fields: [deployments.projectId],
+    references: [projects.id],
+  }),
+}));
+
+export const feedbackRelations = relations(feedback, ({ one }) => ({
+  project: one(projects, {
+    fields: [feedback.projectId],
     references: [projects.id],
   }),
 }));
