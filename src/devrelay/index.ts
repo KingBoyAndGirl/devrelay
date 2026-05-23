@@ -17,11 +17,22 @@ import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { spawn, execSync, fork, ChildProcess } from 'child_process';
 import { randomBytes } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
 
 const PID_FILE = join(homedir(), '.devrelay', 'agent.pid');
+let VERSION = 'dev';
+try {
+  const pkgPath = join(__dirname || dirname(process.argv[1]), 'package.json');
+  VERSION = JSON.parse(readFileSync(pkgPath, 'utf-8')).version || 'dev';
+} catch {
+  // fallback for source tree
+  try {
+    const srcPkg = join(process.cwd(), 'packages', 'devrelay-agent', 'package.json');
+    VERSION = JSON.parse(readFileSync(srcPkg, 'utf-8')).version || 'dev';
+  } catch {}
+}
 
 // ── Config File ──────────────────────────────────────────────────
 
@@ -80,6 +91,8 @@ function parseArgs(): { command: string; flags: Record<string, string> } {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--help' || args[i] === '-h') {
       command = 'help';
+    } else if (args[i] === '--version' || args[i] === '-v') {
+      command = 'version';
     } else if (args[i].startsWith('--')) {
       const key = args[i].slice(2);
       const val = args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : 'true';
@@ -224,6 +237,7 @@ function cmdHelp() {
     configure           Interactive setup (token, server URL, port)
     status              Show configuration and health
     test                Test connection to DevRelay server
+    version             Show version
     help                Show this help
 
   Configure options:
@@ -231,6 +245,7 @@ function cmdHelp() {
     --url <string>      DevRelay server URL
     --port <number>     Agent listening port (default: 4100)
     --daemon            Run in background (for start/restart)
+    --version, -v       Show version
 
   Examples:
     devrelay configure --token abc123 --url https://devrelay.example.com
@@ -314,6 +329,11 @@ function cmdRestart(flags: Record<string, string>) {
 const { command, flags } = parseArgs();
 
 switch (command) {
+  case 'version':
+  case '--version':
+  case '-v':
+    console.log(`devrelay-agent@${VERSION}`);
+    break;
   case 'configure':
     cmdConfigure(flags).then(() => process.exit(0));
     break;
