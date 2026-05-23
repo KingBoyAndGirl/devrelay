@@ -2,541 +2,710 @@
 /**
  * DevRelay Agent
  *
- * Standalone host-side process that manages AI CLI execution.
- * Runs independently from the DevRelay server — install & start with:
- *   npx devrelay-agent
- *   or: npm install -g devrelay-agent && devrelay-agent
+ * Host-side process that manages AI CLI execution for DevRelay.
  *
- * Endpoints:
- *   GET  /health            — health check
- *   GET  /discover          — list detected CLIs on this machine
- *   POST /execute           — execute a CLI prompt, returns SSE stream
- *   GET  /execute/:id       — subscribe to an existing execution stream
- *
- * MCP (Model Context Protocol) endpoints:
- *   POST /mcp               — JSON-RPC 2.0: initialize, tools/list, tools/call
- *   GET  /mcp/sse           — SSE transport for MCP server→client notifications
+ * Usage:
+ *   devrelay-agent                     Start the agent server (default)
+ *   devrelay-agent configure           Interactive setup (token, URL)
+ *   devrelay-agent configure --token X --url Y
+ *   devrelay-agent start               Same as no args
+ *   devrelay-agent status              Show config & health
+ *   devrelay-agent test                Test connection to DevRelay server
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { randomBytes } from 'crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { createInterface } from 'readline';
 
-// ── Config ───────────────────────────────────────────────────────
+// ── Config File ──────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.DEVRELAY_AGENT_PORT || '4100', 10);
-const MAX_CONCURRENT = parseInt(process.env.DEVRELAY_AGENT_MAX_CONCURRENT || '3', 10);
-const DEFAULT_TIMEOUT_MS = parseInt(process.env.DEVRELAY_AGENT_TIMEOUT || '600000', 10);
-const HEARTBEAT_MS = parseInt(process.env.DEVRELAY_AGENT_HEARTBEAT || '120000', 10);
-const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
-const AUTH_TOKEN = process.env.DEVRELAY_AGENT_TOKEN || '';
+const CONFIG_DIR = join(homedir(), '.devrelay');
+const CONFIG_FILE = join(CONFIG_DIR, 'agent.json');
 
-// ── Auth ─────────────────────────────────────────────────────────
-
-function checkAuth(req: IncomingMessage): boolean {
-  if (!AUTH_TOKEN) return true; // no token configured = open access (dev mode)
-  const header = req.headers.authorization || '';
-  return header === `Bearer ${AUTH_TOKEN}`;
+interface AgentConfig {
+  token?: string;
+  serverUrl?: string;
+  port?: number;
+  maxConcurrent?: number;
+  timeoutMs?: number;
+  heartbeatMs?: number;
 }
 
-function sendUnauthorized(res: ServerResponse) {
-  res.writeHead(401, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'Unauthorized: invalid or missing DEVRELAY_AGENT_TOKEN' }));
-}
-
-// ── CLI Discovery ────────────────────────────────────────────────
-
-const KNOWN_CLIS = [
-  'claude', 'codex', 'copilot', 'openclaw', 'opencode',
-  'hermes', 'gemini', 'pi', 'cursor-agent', 'kimi', 'kiro-cli',
-];
-
-interface DiscoveredCLI {
-  bin: string;
-  found: boolean;
-  path: string | null;
-  version: string | null;
-}
-
-function discoverCLIs(): DiscoveredCLI[] {
-  return KNOWN_CLIS.map((bin) => {
-    let path: string | null = null;
-    let version: string | null = null;
-    try {
-      path = execSync(`which ${bin} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
-      if (!path) throw new Error('not found');
-      try {
-        version = execSync(`${bin} --version 2>&1 || true`, { encoding: 'utf-8', timeout: 5000 })
-          .trim().split('\n')[0].slice(0, 200);
-      } catch { /* ignore */ }
-    } catch { /* not found */ }
-    return { bin, found: !!path, path, version };
-  });
-}
-
-// ── Execution State ──────────────────────────────────────────────
-
-interface Execution {
-  id: string;
-  cli: string;
-  prompt: string;
-  process: ChildProcess;
-  startedAt: number;
-  subscribers: Set<ServerResponse>;
-}
-
-const executions = new Map<string, Execution>();
-let activeCount = 0;
-const waitingQueue: Array<() => void> = [];
-
-function acquireSlot(): Promise<void> {
-  if (activeCount < MAX_CONCURRENT) {
-    activeCount++;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => waitingQueue.push(resolve));
-}
-
-function releaseSlot() {
-  activeCount--;
-  const next = waitingQueue.shift();
-  if (next) { activeCount++; next(); }
-}
-
-// ── SSE Helpers ──────────────────────────────────────────────────
-
-function sendEvent(res: ServerResponse, data: Record<string, unknown>) {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-
-// Keep named-event variant for MCP SSE transport only
-function sendSSE(res: ServerResponse, event: string, data: unknown) {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-}
-
-function sseHeaders(res: ServerResponse) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-  });
-}
-
-// ── Route: Execute ───────────────────────────────────────────────
-
-async function handleExecute(req: IncomingMessage, res: ServerResponse) {
-  const body = await readBody(req);
-  let parsed: { cli?: string; prompt?: string };
-  try { parsed = JSON.parse(body); } catch {
-    res.writeHead(400);
-    res.end(JSON.stringify({ error: 'invalid JSON' }));
-    return;
-  }
-
-  const { cli = 'claude', prompt } = parsed;
-  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-    res.writeHead(400);
-    res.end(JSON.stringify({ error: 'prompt is required' }));
-    return;
-  }
-
-  if (activeCount >= MAX_CONCURRENT) {
-    res.writeHead(429);
-    res.end(JSON.stringify({
-      error: 'Too many agents running',
-      queuePosition: waitingQueue.length + 1,
-    }));
-    return;
-  }
-
-  // Build args
-  const args = buildArgs(cli, prompt);
-  const execId = randomBytes(8).toString('hex');
-
-  sseHeaders(res);
-
-  await acquireSlot();
-
-  const child = spawn(cli, args, {
-    env: { ...process.env },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-
-  let totalOutput = 0;
-  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
-  let settled = false;
-
-  const exec: Execution = {
-    id: execId,
-    cli,
-    prompt,
-    process: child,
-    startedAt: Date.now(),
-    subscribers: new Set([res]),
-  };
-  executions.set(execId, exec);
-
-  const finish = (type: string, data: Record<string, unknown>) => {
-    if (settled) return;
-    settled = true;
-    if (heartbeatTimer) clearTimeout(heartbeatTimer);
-    sendEvent(res, { type, ...data });
-    executions.delete(execId);
-    releaseSlot();
-    res.end();
-  };
-
-  const resetHeartbeat = () => {
-    if (heartbeatTimer) clearTimeout(heartbeatTimer);
-    heartbeatTimer = setTimeout(() => {
-      child.kill('SIGKILL');
-      finish('timeout', { message: 'Heartbeat timeout' });
-    }, HEARTBEAT_MS);
-  };
-  resetHeartbeat();
-
-  // Global timeout
-  const globalTimeout = setTimeout(() => {
-    child.kill('SIGKILL');
-    finish('timeout', { message: 'Global timeout' });
-  }, DEFAULT_TIMEOUT_MS);
-
-  child.stdout!.on('data', (chunk: Buffer) => {
-    totalOutput += chunk.length;
-    if (totalOutput > MAX_OUTPUT_BYTES) {
-      child.kill('SIGKILL');
-      finish('error', { error: 'Output exceeded 10MB limit' });
-      return;
+function loadConfig(): AgentConfig {
+  try {
+    if (existsSync(CONFIG_FILE)) {
+      return JSON.parse(readFileSync(CONFIG_FILE, 'utf-8'));
     }
-    resetHeartbeat();
-    sendEvent(res, { type: 'stdout', data: chunk.toString() });
-  });
-
-  child.stderr!.on('data', (chunk: Buffer) => {
-    resetHeartbeat();
-    sendEvent(res, { type: 'stderr', data: chunk.toString() });
-  });
-
-  child.on('close', (code) => {
-    clearTimeout(globalTimeout);
-    finish('exit', { exitCode: code });
-  });
-
-  child.on('error', (err) => {
-    clearTimeout(globalTimeout);
-    finish('error', { error: err.message });
-  });
+  } catch {}
+  return {};
 }
 
-function buildArgs(cli: string, prompt: string): string[] {
-  switch (cli) {
-    case 'claude':
-      return ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
-    case 'codex':
-      return ['exec', prompt];
-    case 'hermes':
-      return ['--prompt', prompt];
-    default:
-      return [prompt];
+function saveConfig(config: AgentConfig) {
+  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
+  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
+}
+
+function resolveConfig(): {
+  port: number;
+  token: string;
+  serverUrl: string;
+  maxConcurrent: number;
+  timeoutMs: number;
+  heartbeatMs: number;
+} {
+  const file = loadConfig();
+  return {
+    port: file.port || parseInt(process.env.DEVRELAY_AGENT_PORT || '4100', 10),
+    token: file.token || process.env.DEVRELAY_AGENT_TOKEN || '',
+    serverUrl: file.serverUrl || process.env.DEVRELAY_AGENT_URL || '',
+    maxConcurrent: file.maxConcurrent || parseInt(process.env.DEVRELAY_AGENT_MAX_CONCURRENT || '3', 10),
+    timeoutMs: file.timeoutMs || parseInt(process.env.DEVRELAY_AGENT_TIMEOUT || '600000', 10),
+    heartbeatMs: file.heartbeatMs || parseInt(process.env.DEVRELAY_AGENT_HEARTBEAT || '120000', 10),
+  };
+}
+
+// ── CLI Argument Parsing ─────────────────────────────────────────
+
+function parseArgs(): { command: string; flags: Record<string, string> } {
+  const args = process.argv.slice(2);
+  const flags: Record<string, string> = {};
+  let command = 'start';
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      const key = args[i].slice(2);
+      const val = args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : 'true';
+      flags[key] = val;
+    } else if (i === 0) {
+      command = args[i];
+    }
   }
+  return { command, flags };
 }
 
-// ── Route Handlers ───────────────────────────────────────────────
+// ── Commands ─────────────────────────────────────────────────────
 
-function handleHealth(_req: IncomingMessage, res: ServerResponse) {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    status: 'ok',
-    activeCount,
-    maxConcurrent: MAX_CONCURRENT,
-    queueLength: waitingQueue.length,
-    uptime: process.uptime(),
-  }));
-}
+async function cmdConfigure(flags: Record<string, string>) {
+  const config = loadConfig();
 
-function handleDiscover(_req: IncomingMessage, res: ServerResponse) {
-  const clis = discoverCLIs();
-  const found = clis.filter((c) => c.found);
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({
-    clis,
-    found: found.length,
-    total: clis.length,
-    best: found[0]?.bin ?? null,
-  }));
-}
-
-function handleCors(req: IncomingMessage, res: ServerResponse) {
-  res.writeHead(204, {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  });
-  res.end();
-}
-
-function handleNotFound(_req: IncomingMessage, res: ServerResponse) {
-  res.writeHead(404, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ error: 'not found' }));
-}
-
-// ── MCP (Model Context Protocol) ─────────────────────────────────
-
-const SERVER_NAME = 'devrelay-agent';
-const SERVER_VERSION = '1.0.0';
-
-interface JSONRPCRequest {
-  jsonrpc: '2.0';
-  id?: number | string;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-interface JSONRPCResponse {
-  jsonrpc: '2.0';
-  id?: number | string;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
-
-const MCP_TOOLS = [
-  {
-    name: 'claude_code_execute',
-    description: 'Execute a prompt using Claude Code CLI. Claude Code is Anthropic\'s agentic coding tool that can read, write, and edit files, run commands, and manage complex multi-step tasks.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'The prompt/instruction for Claude Code to execute' },
-        cwd: { type: 'string', description: 'Working directory for execution' },
-      },
-      required: ['prompt'],
-    },
-  },
-  {
-    name: 'codex_execute',
-    description: 'Execute a prompt using Codex CLI (OpenAI). Codex is a coding agent that works in the terminal.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'The prompt/instruction for Codex to execute' },
-      },
-      required: ['prompt'],
-    },
-  },
-  {
-    name: 'agent_execute',
-    description: 'Execute a prompt using any detected AI CLI on this machine. The CLI is auto-selected based on availability.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        cli: { type: 'string', description: 'The CLI binary to use (claude, codex, hermes, etc.)' },
-        prompt: { type: 'string', description: 'The prompt/instruction to execute' },
-      },
-      required: ['cli', 'prompt'],
-    },
-  },
-];
-
-async function handleMCP(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readBody(req);
-  let rpc: JSONRPCRequest;
-  try { rpc = JSON.parse(body); } catch {
-    sendJSON(res, 400, jsonrpcError(null, -32700, 'Parse error'));
+  if (flags.token || flags.url) {
+    // Non-interactive mode
+    if (flags.token) config.token = flags.token;
+    if (flags.url) config.serverUrl = flags.url;
+    if (flags.port) config.port = parseInt(flags.port, 10);
+    saveConfig(config);
+    console.log('[devrelay-agent] Configuration saved to', CONFIG_FILE);
+    if (config.token) console.log('  Token:    ' + config.token.slice(0, 8) + '...');
+    if (config.serverUrl) console.log('  Server:   ' + config.serverUrl);
+    if (config.port) console.log('  Port:     ' + config.port);
     return;
   }
 
-  if (rpc.jsonrpc !== '2.0') {
-    sendJSON(res, 400, jsonrpcError(rpc.id, -32600, 'Invalid Request'));
-    return;
+  // Interactive mode
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q: string, def = '') => new Promise<string>((resolve) => {
+    rl.question(q + (def ? ` (${def})` : '') + ': ', (ans) => resolve(ans.trim() || def));
+  });
+
+  console.log('\n  DevRelay Agent Configuration\n');
+
+  config.token = await ask('  Agent Token (from DevRelay web UI)', config.token || '');
+  config.serverUrl = await ask('  DevRelay Server URL', config.serverUrl || 'http://localhost:3000');
+  const portStr = await ask('  Agent Port', String(config.port || 4100));
+  config.port = parseInt(portStr, 10);
+
+  rl.close();
+  saveConfig(config);
+
+  console.log('\n  Configuration saved to', CONFIG_FILE);
+  console.log('  Start the agent with: devrelay-agent start\n');
+}
+
+function cmdStatus() {
+  const config = resolveConfig();
+
+  console.log('\n  DevRelay Agent Status');
+  console.log('  ────────────────────');
+  console.log('  Config:       ' + CONFIG_FILE);
+  console.log('  Port:         ' + config.port);
+  console.log('  Token:        ' + (config.token ? config.token.slice(0, 8) + '...' : '(not set)'));
+  console.log('  Server URL:   ' + (config.serverUrl || '(not set)'));
+  console.log('  Max concurrent: ' + config.maxConcurrent);
+  console.log('  Timeout:      ' + (config.timeoutMs / 1000) + 's');
+  console.log('');
+
+  // Health check
+  const http = require('http');
+  const req = http.get(`http://localhost:${config.port}/health`, { timeout: 2000 }, (res: any) => {
+    let data = '';
+    res.on('data', (chunk: any) => data += chunk);
+    res.on('end', () => {
+      try {
+        const health = JSON.parse(data);
+        console.log('  Status:       RUNNING');
+        console.log('  Active:       ' + health.activeCount + '/' + health.maxConcurrent);
+        console.log('  Queue:        ' + health.queueLength);
+        console.log('  Uptime:       ' + Math.floor(health.uptime) + 's');
+      } catch {
+        console.log('  Status:       RUNNING (unexpected response)');
+      }
+      console.log('');
+    });
+  });
+  req.on('error', () => {
+    console.log('  Status:       STOPPED');
+    console.log('');
+  });
+}
+
+async function cmdTest() {
+  const config = resolveConfig();
+
+  if (!config.serverUrl) {
+    console.error('[devrelay-agent] No server URL configured. Run: devrelay-agent configure');
+    process.exit(1);
   }
+
+  if (!config.token) {
+    console.error('[devrelay-agent] No token configured. Run: devrelay-agent configure');
+    process.exit(1);
+  }
+
+  console.log(`[devrelay-agent] Testing connection to ${config.serverUrl}...`);
 
   try {
-    switch (rpc.method) {
-      case 'initialize':
-        sendJSON(res, 200, jsonrpcResult(rpc.id, {
-          protocolVersion: '2024-11-05',
-          capabilities: { tools: {} },
-          serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-        }));
-        break;
+    const res = await fetch(`${config.serverUrl}/api/workspaces`, {
+      headers: { Authorization: `Bearer ${config.token}` },
+      signal: AbortSignal.timeout(5000),
+    });
 
-      case 'tools/list':
-        sendJSON(res, 200, jsonrpcResult(rpc.id, { tools: MCP_TOOLS }));
-        break;
-
-      case 'tools/call': {
-        const params = rpc.params as { name?: string; arguments?: Record<string, string> } | undefined;
-        if (!params?.name || !params?.arguments) {
-          sendJSON(res, 400, jsonrpcError(rpc.id, -32602, 'Invalid params'));
-          return;
-        }
-
-        const tool = MCP_TOOLS.find((t) => t.name === params.name);
-        if (!tool) {
-          sendJSON(res, 404, jsonrpcError(rpc.id, -32601, `Unknown tool: ${params.name}`));
-          return;
-        }
-
-        const toolArgs = params.arguments as { cli?: string; prompt: string; cwd?: string };
-        const cli = toolArgs.cli || (params.name === 'codex_execute' ? 'codex' : 'claude');
-        const prompt = toolArgs.prompt;
-        const cwd = toolArgs.cwd;
-
-        if (!prompt) {
-          sendJSON(res, 400, jsonrpcError(rpc.id, -32602, 'Missing required parameter: prompt'));
-          return;
-        }
-
-        // Execute the CLI and collect output
-        const output = await executeCliForMCP(cli, prompt, cwd);
-
-        sendJSON(res, 200, jsonrpcResult(rpc.id, {
-          content: [{ type: 'text', text: output.output }],
-          isError: output.exitCode !== 0,
-          exitCode: output.exitCode,
-          stderr: output.errors || undefined,
-        }));
-        break;
+    if (res.ok) {
+      console.log('[devrelay-agent] Connection successful ✓');
+      console.log(`  Server responded: HTTP ${res.status}`);
+    } else {
+      console.log(`[devrelay-agent] Server responded: HTTP ${res.status}`);
+      if (res.status === 401) {
+        console.log('  Token may be invalid. Check your configuration.');
       }
-
-      case 'notifications/initialized':
-        sendJSON(res, 200, jsonrpcResult(rpc.id, {}));
-        break;
-
-      default:
-        sendJSON(res, 404, jsonrpcError(rpc.id, -32601, `Method not found: ${rpc.method}`));
     }
   } catch (err: any) {
-    sendJSON(res, 500, jsonrpcError(rpc.id, -32603, `Internal error: ${err.message}`));
+    console.error(`[devrelay-agent] Connection failed: ${err.message}`);
+    console.log('  Check that the DevRelay server is running and accessible.');
   }
 }
 
-function executeCliForMCP(cli: string, prompt: string, cwd?: string): Promise<{
-  output: string;
-  errors: string;
-  exitCode: number | null;
-  timedOut: boolean;
-}> {
-  return new Promise((resolve) => {
+function cmdHelp() {
+  console.log(`
+  DevRelay Agent — AI CLI execution sidecar
+
+  Usage:
+    devrelay-agent [command] [options]
+
+  Commands:
+    start               Start the agent server (default)
+    configure           Interactive setup (token, server URL, port)
+    status              Show configuration and health
+    test                Test connection to DevRelay server
+    help                Show this help
+
+  Configure options:
+    --token <string>    Agent authentication token
+    --url <string>      DevRelay server URL
+    --port <number>     Agent listening port (default: 4100)
+
+  Examples:
+    devrelay-agent configure --token abc123 --url https://devrelay.example.com
+    devrelay-agent start
+    devrelay-agent status
+
+  Config file: ~/.devrelay/agent.json
+  Environment variables (override config file):
+    DEVRELAY_AGENT_TOKEN, DEVRELAY_AGENT_URL, DEVRELAY_AGENT_PORT
+`);
+}
+
+// ── CLI Dispatch ─────────────────────────────────────────────────
+
+const { command, flags } = parseArgs();
+
+switch (command) {
+  case 'configure':
+    cmdConfigure(flags).then(() => process.exit(0));
+    break;
+  case 'status':
+    cmdStatus();
+    break;
+  case 'test':
+    cmdTest().then(() => process.exit(0));
+    break;
+  case 'help':
+  case '--help':
+  case '-h':
+    cmdHelp();
+    break;
+  case 'start':
+  default:
+    startServer();
+    break;
+}
+
+// ── Server ───────────────────────────────────────────────────────
+
+function startServer() {
+  const cfg = resolveConfig();
+  const PORT = cfg.port;
+  const AUTH_TOKEN = cfg.token;
+  const MAX_CONCURRENT = cfg.maxConcurrent;
+  const DEFAULT_TIMEOUT_MS = cfg.timeoutMs;
+  const HEARTBEAT_MS = cfg.heartbeatMs;
+  const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+
+  // ── CLI Discovery ────────────────────────────────────────────
+
+  const KNOWN_CLIS = [
+    'claude', 'codex', 'copilot', 'openclaw', 'opencode',
+    'hermes', 'gemini', 'pi', 'cursor-agent', 'kimi', 'kiro-cli',
+  ];
+
+  interface DiscoveredCLI {
+    bin: string;
+    found: boolean;
+    path: string | null;
+    version: string | null;
+  }
+
+  function discoverCLIs(): DiscoveredCLI[] {
+    return KNOWN_CLIS.map((bin) => {
+      let path: string | null = null;
+      let version: string | null = null;
+      try {
+        path = execSync(`which ${bin} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
+        if (!path) throw new Error('not found');
+        try {
+          version = execSync(`${bin} --version 2>&1 || true`, { encoding: 'utf-8', timeout: 5000 })
+            .trim().split('\n')[0].slice(0, 200);
+        } catch { /* ignore */ }
+      } catch { /* not found */ }
+      return { bin, found: !!path, path, version };
+    });
+  }
+
+  // ── Auth ─────────────────────────────────────────────────────
+
+  function checkAuth(req: IncomingMessage): boolean {
+    if (!AUTH_TOKEN) return true;
+    const header = req.headers.authorization || '';
+    return header === `Bearer ${AUTH_TOKEN}`;
+  }
+
+  function sendUnauthorized(res: ServerResponse) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized: invalid or missing token' }));
+  }
+
+  // ── Execution State ──────────────────────────────────────────
+
+  interface Execution {
+    id: string;
+    cli: string;
+    prompt: string;
+    process: ChildProcess;
+    startedAt: number;
+    subscribers: Set<ServerResponse>;
+  }
+
+  const executions = new Map<string, Execution>();
+  let activeCount = 0;
+  const waitingQueue: Array<() => void> = [];
+
+  function acquireSlot(): Promise<void> {
+    if (activeCount < MAX_CONCURRENT) {
+      activeCount++;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => waitingQueue.push(resolve));
+  }
+
+  function releaseSlot() {
+    activeCount--;
+    const next = waitingQueue.shift();
+    if (next) { activeCount++; next(); }
+  }
+
+  // ── SSE Helpers ──────────────────────────────────────────────
+
+  function sendEvent(res: ServerResponse, data: Record<string, unknown>) {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+
+  function sendSSE(res: ServerResponse, event: string, data: unknown) {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  }
+
+  function sseHeaders(res: ServerResponse) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+  }
+
+  // ── Build CLI Args ───────────────────────────────────────────
+
+  function buildArgs(cli: string, prompt: string): string[] {
+    switch (cli) {
+      case 'claude':  return ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+      case 'codex':   return ['exec', prompt];
+      case 'hermes':  return ['--prompt', prompt];
+      default:        return [prompt];
+    }
+  }
+
+  // ── Route: Execute ───────────────────────────────────────────
+
+  async function handleExecute(req: IncomingMessage, res: ServerResponse) {
+    const body = await readBody(req);
+    let parsed: { cli?: string; prompt?: string };
+    try { parsed = JSON.parse(body); } catch {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'invalid JSON' }));
+      return;
+    }
+
+    const { cli = 'claude', prompt } = parsed;
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+      res.writeHead(400);
+      res.end(JSON.stringify({ error: 'prompt is required' }));
+      return;
+    }
+
+    if (activeCount >= MAX_CONCURRENT) {
+      res.writeHead(429);
+      res.end(JSON.stringify({
+        error: 'Too many agents running',
+        queuePosition: waitingQueue.length + 1,
+      }));
+      return;
+    }
+
     const args = buildArgs(cli, prompt);
+    const execId = randomBytes(8).toString('hex');
+
+    sseHeaders(res);
+
+    await acquireSlot();
+
     const child = spawn(cli, args, {
       env: { ...process.env },
-      cwd: cwd || process.cwd(),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const chunks: string[] = [];
-    const errors: string[] = [];
     let totalOutput = 0;
+    let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
 
-    const timeout = setTimeout(() => {
+    const exec: Execution = {
+      id: execId, cli, prompt,
+      process: child, startedAt: Date.now(),
+      subscribers: new Set([res]),
+    };
+    executions.set(execId, exec);
+
+    const finish = (type: string, data: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      sendEvent(res, { type, ...data });
+      executions.delete(execId);
+      releaseSlot();
+      res.end();
+    };
+
+    const resetHeartbeat = () => {
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      heartbeatTimer = setTimeout(() => {
+        child.kill('SIGKILL');
+        finish('timeout', { message: 'Heartbeat timeout' });
+      }, HEARTBEAT_MS);
+    };
+    resetHeartbeat();
+
+    const globalTimeout = setTimeout(() => {
       child.kill('SIGKILL');
-      resolve({ output: chunks.join(''), errors: errors.join(''), exitCode: null, timedOut: true });
+      finish('timeout', { message: 'Global timeout' });
     }, DEFAULT_TIMEOUT_MS);
 
     child.stdout!.on('data', (chunk: Buffer) => {
       totalOutput += chunk.length;
       if (totalOutput > MAX_OUTPUT_BYTES) {
         child.kill('SIGKILL');
-        clearTimeout(timeout);
-        resolve({ output: chunks.join(''), errors: '[truncated]', exitCode: null, timedOut: false });
+        finish('error', { error: 'Output exceeded 10MB limit' });
         return;
       }
-      chunks.push(chunk.toString());
+      resetHeartbeat();
+      sendEvent(res, { type: 'stdout', data: chunk.toString() });
     });
 
     child.stderr!.on('data', (chunk: Buffer) => {
-      errors.push(chunk.toString());
+      resetHeartbeat();
+      sendEvent(res, { type: 'stderr', data: chunk.toString() });
     });
 
     child.on('close', (code) => {
-      clearTimeout(timeout);
-      resolve({ output: chunks.join(''), errors: errors.join(''), exitCode: code, timedOut: false });
+      clearTimeout(globalTimeout);
+      finish('exit', { exitCode: code });
     });
 
     child.on('error', (err) => {
-      clearTimeout(timeout);
-      resolve({ output: chunks.join(''), errors: errors.join('') + err.message, exitCode: -1, timedOut: false });
+      clearTimeout(globalTimeout);
+      finish('error', { error: err.message });
     });
-  });
-}
-
-function jsonrpcResult(id: number | string | undefined, result: unknown): JSONRPCResponse {
-  return { jsonrpc: '2.0', id, result };
-}
-
-function jsonrpcError(id: number | string | undefined | null, code: number, message: string): JSONRPCResponse {
-  return { jsonrpc: '2.0', id: id ?? undefined, error: { code, message } };
-}
-
-function sendJSON(res: ServerResponse, status: number, data: JSONRPCResponse) {
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-  res.end(JSON.stringify(data));
-}
-
-function handleMCPSSE(req: IncomingMessage, res: ServerResponse) {
-  sseHeaders(res);
-  sendSSE(res, 'endpoint', { uri: `http://localhost:${PORT}/mcp` });
-  // Keep alive — client will POST to /mcp for actual calls
-  const keepAlive = setInterval(() => {
-    res.write(': keepalive\n\n');
-  }, 30000);
-
-  req.on('close', () => {
-    clearInterval(keepAlive);
-  });
-}
-
-// ── HTTP Server ──────────────────────────────────────────────────
-
-const server = createServer((req, res) => {
-  const url = new URL(req.url || '/', `http://localhost:${PORT}`);
-  const method = req.method || 'GET';
-
-  if (method === 'OPTIONS') return handleCors(req, res);
-
-  // Auth check (skip /health for monitoring probes)
-  if (url.pathname !== '/health' && !checkAuth(req)) {
-    return sendUnauthorized(res);
   }
 
-  if (url.pathname === '/health' && method === 'GET') return handleHealth(req, res);
-  if (url.pathname === '/discover' && method === 'GET') return handleDiscover(req, res);
-  if (url.pathname === '/execute' && method === 'POST') return handleExecute(req, res);
-  if (url.pathname === '/mcp' && method === 'POST') { handleMCP(req, res); return; }
-  if (url.pathname === '/mcp/sse' && method === 'GET') { handleMCPSSE(req, res); return; }
+  // ── Route Handlers ───────────────────────────────────────────
 
-  handleNotFound(req, res);
-});
+  function handleHealth(_req: IncomingMessage, res: ServerResponse) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      activeCount, maxConcurrent: MAX_CONCURRENT,
+      queueLength: waitingQueue.length,
+      uptime: process.uptime(),
+    }));
+  }
 
-// ── Helpers ──────────────────────────────────────────────────────
+  function handleDiscover(_req: IncomingMessage, res: ServerResponse) {
+    const clis = discoverCLIs();
+    const found = clis.filter((c) => c.found);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      clis, found: found.length, total: clis.length,
+      best: found[0]?.bin ?? null,
+    }));
+  }
 
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
+  function handleCors(_req: IncomingMessage, res: ServerResponse) {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    });
+    res.end();
+  }
+
+  function handleNotFound(_req: IncomingMessage, res: ServerResponse) {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
+  }
+
+  // ── MCP ──────────────────────────────────────────────────────
+
+  const SERVER_NAME = 'devrelay-agent';
+  const SERVER_VERSION = '1.0.0';
+
+  const MCP_TOOLS = [
+    {
+      name: 'claude_code_execute',
+      description: 'Execute a prompt using Claude Code CLI.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'The prompt for Claude Code' },
+          cwd: { type: 'string', description: 'Working directory' },
+        },
+        required: ['prompt'],
+      },
+    },
+    {
+      name: 'codex_execute',
+      description: 'Execute a prompt using Codex CLI (OpenAI).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: 'The prompt for Codex' },
+        },
+        required: ['prompt'],
+      },
+    },
+    {
+      name: 'agent_execute',
+      description: 'Execute a prompt using any detected AI CLI.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          cli: { type: 'string', description: 'CLI binary to use' },
+          prompt: { type: 'string', description: 'The prompt to execute' },
+        },
+        required: ['cli', 'prompt'],
+      },
+    },
+  ];
+
+  async function handleMCP(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await readBody(req);
+    let rpc: any;
+    try { rpc = JSON.parse(body); } catch {
+      sendJSON(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+      return;
+    }
+
+    if (rpc.jsonrpc !== '2.0') {
+      sendJSON(res, 400, { jsonrpc: '2.0', id: rpc.id, error: { code: -32600, message: 'Invalid Request' } });
+      return;
+    }
+
+    try {
+      switch (rpc.method) {
+        case 'initialize':
+          sendJSON(res, 200, {
+            jsonrpc: '2.0', id: rpc.id,
+            result: {
+              protocolVersion: '2024-11-05',
+              capabilities: { tools: {} },
+              serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
+            },
+          });
+          break;
+        case 'tools/list':
+          sendJSON(res, 200, { jsonrpc: '2.0', id: rpc.id, result: { tools: MCP_TOOLS } });
+          break;
+        case 'tools/call': {
+          const params = rpc.params as { name?: string; arguments?: Record<string, string> } | undefined;
+          if (!params?.name || !params?.arguments) {
+            sendJSON(res, 400, { jsonrpc: '2.0', id: rpc.id, error: { code: -32602, message: 'Invalid params' } });
+            return;
+          }
+          const tool = MCP_TOOLS.find((t) => t.name === params.name);
+          if (!tool) {
+            sendJSON(res, 404, { jsonrpc: '2.0', id: rpc.id, error: { code: -32601, message: `Unknown tool: ${params.name}` } });
+            return;
+          }
+          const toolArgs = params.arguments as { cli?: string; prompt: string; cwd?: string };
+          const cli = toolArgs.cli || (params.name === 'codex_execute' ? 'codex' : 'claude');
+          if (!toolArgs.prompt) {
+            sendJSON(res, 400, { jsonrpc: '2.0', id: rpc.id, error: { code: -32602, message: 'Missing prompt' } });
+            return;
+          }
+          const output = await executeCliForMCP(cli, toolArgs.prompt, toolArgs.cwd);
+          sendJSON(res, 200, {
+            jsonrpc: '2.0', id: rpc.id,
+            result: {
+              content: [{ type: 'text', text: output.output }],
+              isError: output.exitCode !== 0,
+            },
+          });
+          break;
+        }
+        case 'notifications/initialized':
+          sendJSON(res, 200, { jsonrpc: '2.0', id: rpc.id, result: {} });
+          break;
+        default:
+          sendJSON(res, 404, { jsonrpc: '2.0', id: rpc.id, error: { code: -32601, message: `Method not found: ${rpc.method}` } });
+      }
+    } catch (err: any) {
+      sendJSON(res, 500, { jsonrpc: '2.0', id: rpc.id, error: { code: -32603, message: `Internal error: ${err.message}` } });
+    }
+  }
+
+  function executeCliForMCP(cli: string, prompt: string, cwd?: string): Promise<{
+    output: string; exitCode: number | null;
+  }> {
+    return new Promise((resolve) => {
+      const args = buildArgs(cli, prompt);
+      const child = spawn(cli, args, {
+        env: { ...process.env },
+        cwd: cwd || process.cwd(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const chunks: string[] = [];
+      let totalOutput = 0;
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve({ output: chunks.join(''), exitCode: null });
+      }, DEFAULT_TIMEOUT_MS);
+      child.stdout!.on('data', (chunk: Buffer) => {
+        totalOutput += chunk.length;
+        if (totalOutput > MAX_OUTPUT_BYTES) {
+          child.kill('SIGKILL');
+          clearTimeout(timeout);
+          resolve({ output: '[truncated]', exitCode: null });
+          return;
+        }
+        chunks.push(chunk.toString());
+      });
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        resolve({ output: chunks.join(''), exitCode: code });
+      });
+      child.on('error', () => {
+        clearTimeout(timeout);
+        resolve({ output: chunks.join(''), exitCode: -1 });
+      });
+    });
+  }
+
+  function sendJSON(res: ServerResponse, status: number, data: unknown) {
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify(data));
+  }
+
+  function handleMCPSSE(req: IncomingMessage, res: ServerResponse) {
+    sseHeaders(res);
+    sendSSE(res, 'endpoint', { uri: `http://localhost:${PORT}/mcp` });
+    const keepAlive = setInterval(() => { res.write(': keepalive\n\n'); }, 30000);
+    req.on('close', () => { clearInterval(keepAlive); });
+  }
+
+  // ── HTTP Server ──────────────────────────────────────────────
+
+  const server = createServer((req, res) => {
+    const url = new URL(req.url || '/', `http://localhost:${PORT}`);
+    const method = req.method || 'GET';
+
+    if (method === 'OPTIONS') return handleCors(req, res);
+    if (url.pathname !== '/health' && !checkAuth(req)) return sendUnauthorized(res);
+
+    if (url.pathname === '/health' && method === 'GET') return handleHealth(req, res);
+    if (url.pathname === '/discover' && method === 'GET') return handleDiscover(req, res);
+    if (url.pathname === '/execute' && method === 'POST') return handleExecute(req, res);
+    if (url.pathname === '/mcp' && method === 'POST') { handleMCP(req, res); return; }
+    if (url.pathname === '/mcp/sse' && method === 'GET') { handleMCPSSE(req, res); return; }
+
+    handleNotFound(req, res);
+  });
+
+  // ── Helpers ──────────────────────────────────────────────────
+
+  function readBody(req: IncomingMessage): Promise<string> {
+    return new Promise((resolve) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => resolve(Buffer.concat(chunks).toString()));
+    });
+  }
+
+  // ── Startup ──────────────────────────────────────────────────
+
+  server.listen(PORT, () => {
+    const clis = discoverCLIs();
+    const found = clis.filter((c) => c.found);
+    console.log(`\n[devrelay-agent] ========================================`);
+    console.log(`[devrelay-agent]  Listening   http://localhost:${PORT}`);
+    console.log(`[devrelay-agent]  Auth:       ${AUTH_TOKEN ? 'ENABLED' : 'DISABLED'}`);
+    console.log(`[devrelay-agent]  Config:     ${CONFIG_FILE}`);
+    console.log(`[devrelay-agent]  CLIs:       ${found.map(c => c.bin).join(', ') || 'none detected'}`);
+    console.log(`[devrelay-agent] ========================================\n`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('[devrelay-agent] shutting down...');
+    executions.forEach((exec) => exec.process.kill('SIGTERM'));
+    server.close();
+    process.exit(0);
   });
 }
-
-// ── Startup ──────────────────────────────────────────────────────
-
-server.listen(PORT, () => {
-  const clis = discoverCLIs();
-  const found = clis.filter((c) => c.found);
-  console.log(`[devrelay-agent] listening on http://localhost:${PORT}`);
-  console.log(`[devrelay-agent] auth: ${AUTH_TOKEN ? 'ENABLED (token required)' : 'DISABLED (set DEVRELAY_AGENT_TOKEN to secure)'}`);
-  console.log(`[devrelay-agent] max concurrent: ${MAX_CONCURRENT}, timeout: ${DEFAULT_TIMEOUT_MS}ms, heartbeat: ${HEARTBEAT_MS}ms`);
-  console.log(`[devrelay-agent] detected ${found.length}/${clis.length} CLIs: ${found.map(c => c.bin).join(', ') || 'none'}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('[devrelay-agent] shutting down...');
-  executions.forEach((exec) => {
-    exec.process.kill('SIGTERM');
-  });
-  server.close();
-  process.exit(0);
-});

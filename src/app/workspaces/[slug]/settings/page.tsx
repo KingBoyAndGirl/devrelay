@@ -47,11 +47,26 @@ export default function WorkspaceSettingsPage() {
   const [inviteLink, setInviteLink] = useState('');
   const [removingMember, setRemovingMember] = useState<string | null>(null);
 
+  const [agentToken, setAgentToken] = useState<string | null>(null);
+  const [hasToken, setHasToken] = useState(false);
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [showToken, setShowToken] = useState(false);
+
   useEffect(() => {
     loadWorkspace();
     loadMembers();
     loadInvites();
+    loadToken();
   }, [slug]);
+
+  async function loadToken() {
+    const res = await fetch(`/api/workspaces/${slug}/agent-token`);
+    if (res.ok) {
+      const data = await res.json();
+      setHasToken(data.hasToken);
+      setAgentToken(data.token || null);
+    }
+  }
 
   async function loadWorkspace() {
     const res = await fetch(`/api/workspaces/${slug}`);
@@ -123,6 +138,28 @@ export default function WorkspaceSettingsPage() {
   async function handleDeleteInvite(inviteId: string) {
     await fetch(`/api/workspaces/${slug}/invitations/${inviteId}`, { method: 'DELETE' });
     loadInvites();
+  }
+
+  async function handleGenerateToken() {
+    setTokenLoading(true);
+    const res = await fetch(`/api/workspaces/${slug}/agent-token`, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      setAgentToken(data.token);
+      setHasToken(true);
+      setShowToken(true);
+    }
+    setTokenLoading(false);
+  }
+
+  async function handleRevokeToken() {
+    if (!confirm('撤销 Token 后，已配置的 Agent 将无法连接。确定继续？')) return;
+    setTokenLoading(true);
+    await fetch(`/api/workspaces/${slug}/agent-token`, { method: 'DELETE' });
+    setHasToken(false);
+    setAgentToken(null);
+    setShowToken(false);
+    setTokenLoading(false);
   }
 
   async function handleDelete() {
@@ -274,6 +311,72 @@ export default function WorkspaceSettingsPage() {
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        <hr className="border-gray-200" />
+
+        {/* Agent Token */}
+        <div>
+          <h3 className="font-semibold text-sm text-gray-700 mb-3">Agent 连接令牌</h3>
+          <p className="text-xs text-gray-500 mb-3">
+            生成令牌后，在宿主机的 devrelay-agent 中配置此令牌以建立安全连接。
+          </p>
+
+          {!hasToken ? (
+            <button
+              onClick={handleGenerateToken}
+              disabled={tokenLoading}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              {tokenLoading ? '生成中...' : '生成令牌'}
+            </button>
+          ) : (
+            <div className="space-y-3">
+              {showToken && agentToken && agentToken.includes('*') === false ? (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                  <p className="text-xs text-yellow-800 mb-2 font-medium">请立即复制，此令牌仅显示一次：</p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs bg-white px-2 py-1.5 rounded border border-yellow-300 font-mono break-all">
+                      {agentToken}
+                    </code>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(agentToken); }}
+                      className="px-3 py-1.5 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 shrink-0"
+                    >
+                      复制
+                    </button>
+                  </div>
+                  <div className="mt-3 text-xs text-gray-600 bg-gray-50 rounded p-2">
+                    <p className="font-medium mb-1">在宿主机上运行：</p>
+                    <code className="text-green-700">devrelay-agent configure --token {agentToken.slice(0, 8)}...</code>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <span className="text-sm text-green-800">令牌已配置</span>
+                  <span className="text-xs text-gray-400 ml-auto">{agentToken}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGenerateToken}
+                  disabled={tokenLoading}
+                  className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                >
+                  重新生成
+                </button>
+                <button
+                  onClick={handleRevokeToken}
+                  disabled={tokenLoading}
+                  className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
+                >
+                  撤销令牌
+                </button>
+              </div>
             </div>
           )}
         </div>

@@ -18,6 +18,7 @@ export const workspaces = sqliteTable('workspaces', {
   slug:        text('slug').notNull().unique(),
   description: text('description'),
   createdBy:   text('created_by').notNull().references(() => users.id),
+  settings:    text('settings'),   // JSON: { agentToken, ... }
   createdAt:   text('created_at').notNull(),
   updatedAt:   text('updated_at').notNull(),
 });
