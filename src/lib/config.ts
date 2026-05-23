@@ -17,5 +17,6 @@ export const config = {
     codexPath: process.env.CODEX_PATH || 'codex',
     hermesPath: process.env.HERMES_PATH || 'hermes',
     sidecarUrl: process.env.DEVRELAY_AGENT_URL || 'http://localhost:4100',
+    agentToken: process.env.DEVRELAY_AGENT_TOKEN || '',
   },
 };

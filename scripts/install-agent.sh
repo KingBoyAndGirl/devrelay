@@ -73,6 +73,25 @@ detect_clis() {
   fi
 }
 
+# ── Generate auth token ──────────────────────────────────────────
+
+generate_token() {
+  local token_file="$HOME/.devrelay-agent-token"
+  if [ -f "$token_file" ]; then
+    AGENT_TOKEN=$(cat "$token_file")
+    info "Using existing token from $token_file"
+  else
+    AGENT_TOKEN=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    echo "$AGENT_TOKEN" > "$token_file"
+    chmod 600 "$token_file"
+    info "Generated new auth token -> $token_file"
+  fi
+  echo ""
+  echo -e "  ${BOLD}Add this to your DevRelay server environment:${NC}"
+  echo -e "  DEVRELAY_AGENT_TOKEN=${AGENT_TOKEN}"
+  echo ""
+}
+
 # ── Systemd service (optional) ───────────────────────────────────
 
 setup_systemd() {
@@ -88,7 +107,7 @@ setup_systemd() {
 
   read -rp "$(echo -e "${BOLD}Install as systemd service? [y/N]: ${NC}")" answer
   if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-    info "Skipped. Start manually with: devrelay-agent"
+    info "Skipped. Start manually with: DEVRELAY_AGENT_TOKEN=\$AGENT_TOKEN devrelay-agent"
     return
   fi
 
@@ -107,6 +126,7 @@ Restart=on-failure
 RestartSec=5
 Environment=DEVRELAY_AGENT_PORT=4100
 Environment=DEVRELAY_AGENT_MAX_CONCURRENT=3
+Environment=DEVRELAY_AGENT_TOKEN=${AGENT_TOKEN}
 
 [Install]
 WantedBy=multi-user.target
@@ -159,6 +179,7 @@ main() {
   echo ""
   detect_clis
   echo ""
+  generate_token
   setup_systemd
   print_summary
 }

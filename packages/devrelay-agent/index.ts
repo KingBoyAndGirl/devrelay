@@ -29,6 +29,20 @@ const MAX_CONCURRENT = parseInt(process.env.DEVRELAY_AGENT_MAX_CONCURRENT || '3'
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.DEVRELAY_AGENT_TIMEOUT || '600000', 10);
 const HEARTBEAT_MS = parseInt(process.env.DEVRELAY_AGENT_HEARTBEAT || '120000', 10);
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+const AUTH_TOKEN = process.env.DEVRELAY_AGENT_TOKEN || '';
+
+// ── Auth ─────────────────────────────────────────────────────────
+
+function checkAuth(req: IncomingMessage): boolean {
+  if (!AUTH_TOKEN) return true; // no token configured = open access (dev mode)
+  const header = req.headers.authorization || '';
+  return header === `Bearer ${AUTH_TOKEN}`;
+}
+
+function sendUnauthorized(res: ServerResponse) {
+  res.writeHead(401, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Unauthorized: invalid or missing DEVRELAY_AGENT_TOKEN' }));
+}
 
 // ── CLI Discovery ────────────────────────────────────────────────
 
@@ -482,6 +496,11 @@ const server = createServer((req, res) => {
 
   if (method === 'OPTIONS') return handleCors(req, res);
 
+  // Auth check (skip /health for monitoring probes)
+  if (url.pathname !== '/health' && !checkAuth(req)) {
+    return sendUnauthorized(res);
+  }
+
   if (url.pathname === '/health' && method === 'GET') return handleHealth(req, res);
   if (url.pathname === '/discover' && method === 'GET') return handleDiscover(req, res);
   if (url.pathname === '/execute' && method === 'POST') return handleExecute(req, res);
@@ -507,6 +526,7 @@ server.listen(PORT, () => {
   const clis = discoverCLIs();
   const found = clis.filter((c) => c.found);
   console.log(`[devrelay-agent] listening on http://localhost:${PORT}`);
+  console.log(`[devrelay-agent] auth: ${AUTH_TOKEN ? 'ENABLED (token required)' : 'DISABLED (set DEVRELAY_AGENT_TOKEN to secure)'}`);
   console.log(`[devrelay-agent] max concurrent: ${MAX_CONCURRENT}, timeout: ${DEFAULT_TIMEOUT_MS}ms, heartbeat: ${HEARTBEAT_MS}ms`);
   console.log(`[devrelay-agent] detected ${found.length}/${clis.length} CLIs: ${found.map(c => c.bin).join(', ') || 'none'}`);
 });

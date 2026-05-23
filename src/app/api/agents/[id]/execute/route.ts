@@ -10,10 +10,20 @@ import { runAutoPR } from '@/lib/git/auto-pr';
 import { createId } from '@paralleldrive/cuid2';
 
 const SIDECAR_URL = config.agents.sidecarUrl;
+const SIDECAR_TOKEN = config.agents.agentToken;
+
+function sidecarHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (SIDECAR_TOKEN) headers['Authorization'] = `Bearer ${SIDECAR_TOKEN}`;
+  return headers;
+}
 
 async function sidecarAvailable(): Promise<boolean> {
   try {
-    const res = await fetch(`${SIDECAR_URL}/health`, { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(`${SIDECAR_URL}/health`, {
+      signal: AbortSignal.timeout(2000),
+      headers: SIDECAR_TOKEN ? { Authorization: `Bearer ${SIDECAR_TOKEN}` } : {},
+    });
     return res.ok;
   } catch {
     return false;
@@ -120,7 +130,7 @@ async function proxyToSidecar(
 
   const res = await fetch(`${SIDECAR_URL}/execute`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: sidecarHeaders(),
     body: JSON.stringify({ cli, prompt }),
   });
 

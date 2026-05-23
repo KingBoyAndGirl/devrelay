@@ -19,4 +19,6 @@ services:
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-http://localhost:3000/api/auth/callback/github}
+      - DEVRELAY_AGENT_URL=${DEVRELAY_AGENT_URL:-http://host.docker.internal:4100}
+      - DEVRELAY_AGENT_TOKEN=${DEVRELAY_AGENT_TOKEN:-}
     restart: unless-stopped
