@@ -13,8 +13,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "devrelay": "tsx src/devrelay/index.ts",
-    "agent:sync": "cp src/devrelay/index.ts packages/devrelay/index.ts",
-    "agent:publish": "npm run agent:sync && cd packages/devrelay && npm publish"
+    "agent:sync": "cp src/devrelay/index.ts packages/devrelay-agent/index.ts",
+    "agent:publish": "npm run agent:sync && cd packages/devrelay-agent && npm publish"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
