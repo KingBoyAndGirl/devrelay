@@ -76,11 +76,13 @@ function parseArgs(): { command: string; flags: Record<string, string> } {
   let command = 'start';
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith('--')) {
+    if (args[i] === '--help' || args[i] === '-h') {
+      command = 'help';
+    } else if (args[i].startsWith('--')) {
       const key = args[i].slice(2);
       const val = args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : 'true';
       flags[key] = val;
-    } else if (i === 0) {
+    } else if (i === 0 || (command === 'start' && args[i] !== 'start')) {
       command = args[i];
     }
   }
