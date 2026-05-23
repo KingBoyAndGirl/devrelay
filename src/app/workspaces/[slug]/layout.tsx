@@ -42,6 +42,7 @@ export default async function WorkspaceLayout({
           <NavItem href={`/workspaces/${slug}/projects`} label="项目" />
           <NavItem href={`/workspaces/${slug}/agents`} label="Agent" />
           <NavItem href={`/workspaces/${slug}/notifications`} label="通知" badge={<NotificationNavBadge />} />
+          <NavItem href={`/workspaces/${slug}/permissions`} label="权限" />
           <NavItem href={`/workspaces/${slug}/settings`} label="设置" />
         </nav>
 
