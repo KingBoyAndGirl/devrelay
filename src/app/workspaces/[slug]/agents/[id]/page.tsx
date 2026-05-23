@@ -5,6 +5,19 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AgentRunner from '@/components/agents/AgentRunner';
 import { ROLE_LABELS, ROLE_PERMISSIONS, STAGE_NAMES } from '@/types';
+import { AGENT_TYPES } from '@/lib/agents';
+
+const ROLE_OPTIONS = Object.entries(ROLE_LABELS)
+  .filter(([key]) => key !== 'admin')
+  .map(([key, label]) => ({ value: key, label }));
+
+const ROLE_BADGES: Record<string, string> = {
+  pm: 'bg-yellow-100 text-yellow-700',
+  architect: 'bg-purple-100 text-purple-700',
+  developer: 'bg-blue-100 text-blue-700',
+  qa: 'bg-green-100 text-green-700',
+  delivery_manager: 'bg-orange-100 text-orange-700',
+};
 
 interface TaskItem {
   id: string;
@@ -82,6 +95,15 @@ export default function AgentDetailPage() {
   const [showProjects, setShowProjects] = useState(false);
   const [projectAssignments, setProjectAssignments] = useState<Array<{ id: string; name: string; status: string; assigned: boolean }>>([]);
   const [savingProjects, setSavingProjects] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editRole, setEditRole] = useState('');
+  const [editExecPath, setEditExecPath] = useState('');
+  const [editArgsTemplate, setEditArgsTemplate] = useState('');
+  const [editEnvVars, setEditEnvVars] = useState('');
+  const [editGitName, setEditGitName] = useState('');
+  const [editGitEmail, setEditGitEmail] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch(`/api/workspaces/${slug}/agents/${agentId}`)
@@ -106,6 +128,48 @@ export default function AgentDetailPage() {
 
   const todoTasks = tasks.filter(t => t.status === 'todo' || t.status === 'in_progress');
   const doneTasks = tasks.filter(t => t.status === 'done' || t.status === 'in_review');
+
+  function startEditing() {
+    if (!agent) return;
+    setEditName(agent.name);
+    setEditRole(agent.role);
+    setEditExecPath(agent.execPath || '');
+    setEditArgsTemplate(agent.argsTemplate || '');
+    setEditEnvVars('');
+    setEditGitName(agent.gitName || '');
+    setEditGitEmail(agent.gitEmail || '');
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    if (!agent) return;
+    setSaving(true);
+    const body: Record<string, unknown> = {
+      name: editName,
+      role: editRole,
+      execPath: editExecPath || null,
+      argsTemplate: editArgsTemplate || null,
+      gitName: editGitName || null,
+      gitEmail: editGitEmail || null,
+    };
+    if (editEnvVars) {
+      try { body.envVars = JSON.parse(editEnvVars); } catch { body.envVars = editEnvVars; }
+    } else {
+      body.envVars = null;
+    }
+    await fetch(`/api/agents/${agentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    setAgent({ ...agent, name: editName, role: editRole, execPath: editExecPath || null, argsTemplate: editArgsTemplate || null, gitName: editGitName || null, gitEmail: editGitEmail || null });
+    setSaving(false);
+    setEditing(false);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+  }
 
   async function loadProjects() {
     const res = await fetch(`/api/workspaces/${slug}/agents/${agentId}/projects`);
@@ -138,72 +202,187 @@ export default function AgentDetailPage() {
       <main className="max-w-4xl mx-auto p-6 space-y-6">
         {/* Agent info card */}
         <div className="bg-white border border-gray-200 rounded-xl p-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div>
-                <h2 className="font-semibold text-lg">{agent.name}</h2>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700">{agent.type}</span>
-                  <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
-                    {ROLE_LABELS[agent.role] || agent.role}
-                  </span>
-                  <span className={`w-2 h-2 rounded-full ${agent.enabled ? 'bg-green-500' : 'bg-gray-300'}`} />
-                  <span className="text-xs text-gray-500">{agent.enabled ? '已启用' : '已禁用'}</span>
-                </div>
+          {editing ? (
+            /* Edit form */
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">编辑 Agent</h3>
+                <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700">{agent.type}</span>
               </div>
-            </div>
-            <button
-              onClick={() => handleToggle(agent.enabled)}
-              className={`px-3 py-1.5 text-xs rounded-lg ${
-                agent.enabled
-                  ? 'border border-red-300 text-red-600 hover:bg-red-50'
-                  : 'bg-green-600 text-white hover:bg-green-700'
-              }`}
-            >
-              {agent.enabled ? '禁用' : '启用'}
-            </button>
-          </div>
 
-          {/* Role permissions */}
-          {ROLE_PERMISSIONS[agent.role] && (
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              <h4 className="text-xs font-medium text-gray-500 mb-2">角色权限</h4>
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div>
-                  <span className="text-gray-400">负责阶段：</span>
-                  <span className="text-gray-700 font-mono">{ROLE_PERMISSIONS[agent.role].stages}</span>
-                </div>
-                <div className="flex flex-wrap gap-1 items-start">
-                  {ROLE_PERMISSIONS[agent.role].capabilities.map((cap, i) => (
-                    <span key={i} className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">
-                      {cap}
-                    </span>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">名称</label>
+                <input
+                  type="text" value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">角色</label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {ROLE_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
+                </select>
+                {ROLE_PERMISSIONS[editRole] && (
+                  <div className="mt-2 border border-blue-200 rounded-lg p-3 bg-blue-50">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${ROLE_BADGES[editRole] || 'bg-gray-100 text-gray-600'}`}>
+                        {ROLE_LABELS[editRole]}
+                      </span>
+                      <span className="text-xs text-gray-500">权限：</span>
+                      <span className="text-xs text-gray-700 font-mono">{ROLE_PERMISSIONS[editRole].stages}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {ROLE_PERMISSIONS[editRole].capabilities.map((cap, i) => (
+                        <span key={i} className="text-xs bg-white text-gray-600 px-1.5 py-0.5 rounded border border-gray-100">{cap}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">CLI 路径</label>
+                <input
+                  type="text" value={editExecPath}
+                  onChange={(e) => setEditExecPath(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">参数模板</label>
+                <input
+                  type="text" value={editArgsTemplate}
+                  onChange={(e) => setEditArgsTemplate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                />
+              </div>
+
+              <fieldset className="border border-gray-200 rounded-lg p-4">
+                <legend className="text-sm font-medium text-gray-700 px-1">Git 配置</legend>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">用户名</label>
+                    <input
+                      type="text" value={editGitName}
+                      onChange={(e) => setEditGitName(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">邮箱</label>
+                    <input
+                      type="email" value={editGitEmail}
+                      onChange={(e) => setEditGitEmail(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    />
+                  </div>
+                </div>
+              </fieldset>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={cancelEditing}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {saving ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Read-only display */
+            <>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <h2 className="font-semibold text-lg">{agent.name}</h2>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700">{agent.type}</span>
+                      <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+                        {ROLE_LABELS[agent.role] || agent.role}
+                      </span>
+                      <span className={`w-2 h-2 rounded-full ${agent.enabled ? 'bg-green-500' : 'bg-gray-300'}`} />
+                      <span className="text-xs text-gray-500">{agent.enabled ? '已启用' : '已禁用'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={startEditing}
+                    className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    onClick={() => handleToggle(agent.enabled)}
+                    className={`px-3 py-1.5 text-xs rounded-lg ${
+                      agent.enabled
+                        ? 'border border-red-300 text-red-600 hover:bg-red-50'
+                        : 'bg-green-600 text-white hover:bg-green-700'
+                    }`}
+                  >
+                    {agent.enabled ? '禁用' : '启用'}
+                  </button>
                 </div>
               </div>
-            </div>
-          )}
 
-          <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-100 text-sm">
-            <div>
-              <span className="text-gray-500">执行路径：</span>
-              <code className="bg-gray-100 px-1 rounded text-xs">{agent.execPath || '默认'}</code>
-            </div>
-            <div>
-              <span className="text-gray-500">角色：</span>
-              <span>{ROLE_LABELS[agent.role] || agent.role}</span>
-            </div>
-            {agent.gitName && (
-              <div>
-                <span className="text-gray-500">Git 用户：</span>
-                <span>{agent.gitName}{agent.gitEmail && ` <${agent.gitEmail}>`}</span>
+              {ROLE_PERMISSIONS[agent.role] && (
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <h4 className="text-xs font-medium text-gray-500 mb-2">角色权限</h4>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-gray-400">负责阶段：</span>
+                      <span className="text-gray-700 font-mono">{ROLE_PERMISSIONS[agent.role].stages}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 items-start">
+                      {ROLE_PERMISSIONS[agent.role].capabilities.map((cap, i) => (
+                        <span key={i} className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded border border-blue-100">
+                          {cap}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-100 text-sm">
+                <div>
+                  <span className="text-gray-500">执行路径：</span>
+                  <code className="bg-gray-100 px-1 rounded text-xs">{agent.execPath || '默认'}</code>
+                </div>
+                <div>
+                  <span className="text-gray-500">角色：</span>
+                  <span>{ROLE_LABELS[agent.role] || agent.role}</span>
+                </div>
+                {agent.gitName && (
+                  <div>
+                    <span className="text-gray-500">Git 用户：</span>
+                    <span>{agent.gitName}{agent.gitEmail && ` <${agent.gitEmail}>`}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="text-gray-500">创建于：</span>
+                  <span>{new Date(agent.createdAt).toLocaleDateString('zh-CN')}</span>
+                </div>
               </div>
-            )}
-            <div>
-              <span className="text-gray-500">创建于：</span>
-              <span>{new Date(agent.createdAt).toLocaleDateString('zh-CN')}</span>
-            </div>
-          </div>
+            </>
+          )}
         </div>
 
         {/* Project assignments */}
