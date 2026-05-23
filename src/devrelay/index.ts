@@ -283,7 +283,7 @@ function startDaemon(flags: Record<string, string>) {
   if (pid) {
     try { process.kill(pid, 'SIGTERM'); } catch {}
   }
-  const child = fork(process.argv[1], ['start', '--port', String(port)], {
+  const child = spawn(process.execPath, [process.argv[1], 'start', '--port', String(port)], {
     detached: true,
     stdio: 'ignore',
   });
@@ -293,6 +293,7 @@ function startDaemon(flags: Record<string, string>) {
     writeFileSync(PID_FILE, String(child.pid));
     console.log(`[devrelay] Agent started in background (pid ${child.pid}) on port ${port}`);
   }
+  process.exit(0);
 }
 
 function cmdRestart(flags: Record<string, string>) {
