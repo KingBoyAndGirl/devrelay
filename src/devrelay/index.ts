@@ -216,6 +216,8 @@ function cmdHelp() {
 
   Commands:
     start               Start the agent server (default)
+    stop                Stop the running agent
+    restart             Restart the agent server
     configure           Interactive setup (token, server URL, port)
     status              Show configuration and health
     test                Test connection to DevRelay server
@@ -229,12 +231,50 @@ function cmdHelp() {
   Examples:
     devrelay configure --token abc123 --url https://devrelay.example.com
     devrelay start
+    devrelay restart
     devrelay status
 
   Config file: ~/.devrelay/agent.json
   Environment variables (override config file):
     DEVRELAY_AGENT_TOKEN, DEVRELAY_AGENT_URL, DEVRELAY_AGENT_PORT
 `);
+}
+
+function getPortPid(port: number): number | null {
+  try {
+    const output = execSync(`ss -tlnp sport = :${port} 2>/dev/null | grep -oP 'pid=\\K[0-9]+'`, { encoding: 'utf-8' }).trim();
+    return output ? parseInt(output, 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+function cmdStop() {
+  const cfg = resolveConfig();
+  const pid = getPortPid(cfg.port);
+  if (!pid) {
+    console.log(`[devrelay] No process found on port ${cfg.port}`);
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+    console.log(`[devrelay] Stopped agent (pid ${pid}) on port ${cfg.port}`);
+  } catch (err: any) {
+    console.error(`[devrelay] Failed to stop pid ${pid}: ${err.message}`);
+  }
+}
+
+function cmdRestart(flags: Record<string, string>) {
+  const cfg = resolveConfig();
+  if (flags.port) cfg.port = parseInt(flags.port, 10);
+  const pid = getPortPid(cfg.port);
+  if (pid) {
+    try {
+      process.kill(pid, 'SIGTERM');
+      console.log(`[devrelay] Stopped agent (pid ${pid})`);
+    } catch {}
+  }
+  setTimeout(() => startServer(flags), 500);
 }
 
 // ── CLI Dispatch ─────────────────────────────────────────────────
@@ -250,6 +290,12 @@ switch (command) {
     break;
   case 'test':
     cmdTest().then(() => process.exit(0));
+    break;
+  case 'stop':
+    cmdStop();
+    break;
+  case 'restart':
+    cmdRestart(flags);
     break;
   case 'help':
   case '--help':
@@ -700,6 +746,28 @@ function startServer(flags: Record<string, string> = {}) {
   }
 
   // ── Startup ──────────────────────────────────────────────────
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      const pid = getPortPid(PORT);
+      console.log(`[devrelay] Port ${PORT} is already in use${pid ? ` (pid ${pid})` : ''}.`);
+      if (pid) {
+        console.log(`[devrelay] Killing old process ${pid}...`);
+        try {
+          process.kill(pid, 'SIGTERM');
+          setTimeout(() => {
+            server.listen(PORT);
+          }, 500);
+          return;
+        } catch (killErr: any) {
+          console.error(`[devrelay] Failed to kill pid ${pid}: ${killErr.message}`);
+        }
+      }
+      console.log(`[devrelay] Run "devrelay stop" or "devrelay restart" to resolve.`);
+      process.exit(1);
+    }
+    throw err;
+  });
 
   server.listen(PORT, () => {
     const clis = discoverCLIs();
