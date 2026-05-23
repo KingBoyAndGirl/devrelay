@@ -75,12 +75,9 @@ export default function PRsPage() {
   };
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href={`/workspaces/${slug}/projects/${projectId}`} className="text-gray-500 hover:text-gray-700">&larr; 返回项目</Link>
-          <h1 className="text-xl font-bold">Pull Requests</h1>
-        </div>
+    <div>
+      <div className="px-6 py-4 flex items-center justify-between">
+        <h1 className="text-lg font-bold">Pull Requests</h1>
         <button
           onClick={() => setShowCreate(!showCreate)}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
@@ -89,7 +86,7 @@ export default function PRsPage() {
         >
           {showCreate ? '取消' : '创建 PR'}
         </button>
-      </header>
+      </div>
 
       <main className="max-w-4xl mx-auto p-6">
         {error && (

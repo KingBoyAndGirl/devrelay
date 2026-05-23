@@ -232,36 +232,15 @@ export default function ProjectDetailPage() {
   const allComplete = project.stages.every(s => s.status === 'completed');
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="flex items-center gap-4 mb-3">
-          <Link href={`/workspaces/${slug}/projects`} className="text-gray-500 hover:text-gray-700">&larr; 项目列表</Link>
-          <h1 className="text-xl font-bold">{project.name}</h1>
-          {project.customer && <span className="text-sm text-gray-500">客户: {project.customer}</span>}
-        </div>
-        {project.description && (
-          <p className="text-sm text-gray-500 mb-3">{project.description}</p>
+    <div>
+      {/* Project info bar */}
+      <div className="px-6 py-4 space-y-3">
+        {project.customer && (
+          <span className="text-sm text-gray-500">客户: {project.customer}</span>
         )}
-        <div className="flex items-center gap-3 mb-3">
-          <Link
-            href={`/workspaces/${slug}/projects/${id}/documents`}
-            className="text-sm text-blue-600 hover:underline"
-          >
-            文档中心
-          </Link>
-          <Link
-            href={`/workspaces/${slug}/projects/${id}/tasks`}
-            className="text-sm text-blue-600 hover:underline"
-          >
-            任务看板
-          </Link>
-          <Link
-            href={`/workspaces/${slug}/projects/${id}/prs`}
-            className="text-sm text-blue-600 hover:underline"
-          >
-            Pull Requests
-          </Link>
-        </div>
+        {project.description && (
+          <p className="text-sm text-gray-500">{project.description}</p>
+        )}
         <div className="flex items-center gap-3">
           <div className="flex-1 bg-gray-200 rounded-full h-3">
             <div
@@ -271,9 +250,9 @@ export default function ProjectDetailPage() {
           </div>
           <span className="text-sm font-medium">{progress}%</span>
         </div>
-      </header>
+      </div>
 
-      <main className="max-w-5xl mx-auto p-6">
+      <div className="max-w-5xl mx-auto px-6 pb-6">
         <div className="space-y-3">
           {project.stages.map((stage) => (
             <div
@@ -525,7 +504,7 @@ export default function ProjectDetailPage() {
             </div>
           ))}
         </div>
-      </main>
+      </div>
     </div>
   );
 }

@@ -16,16 +16,9 @@ export default async function WorkspacePage({ params }: { params: { slug: string
   if (!ws) notFound();
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/" className="text-gray-500 hover:text-gray-700">&larr; 空间列表</Link>
-          <h1 className="text-xl font-bold">{ws.name}</h1>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto p-6">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div className="max-w-4xl mx-auto p-6">
+      <h2 className="text-lg font-semibold mb-6">概览</h2>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <Link
             href={`/workspaces/${ws.slug}/repos`}
             className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow"
@@ -55,7 +48,6 @@ export default async function WorkspacePage({ params }: { params: { slug: string
             <p className="text-sm text-gray-500 mt-1">空间设置与成员管理</p>
           </Link>
         </div>
-      </main>
     </div>
   );
 }

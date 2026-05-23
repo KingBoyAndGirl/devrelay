@@ -56,12 +56,11 @@ export default function WorkspaceSettingsPage() {
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
-        <button onClick={() => router.back()} className="text-gray-500 hover:text-gray-700">&larr; 返回</button>
-        <h1 className="text-xl font-bold">空间设置</h1>
-      </header>
-      <main className="max-w-lg mx-auto p-6 space-y-8">
+    <div>
+      <div className="px-6 py-4">
+        <h1 className="text-lg font-bold">空间设置</h1>
+      </div>
+      <div className="max-w-lg mx-auto p-6 space-y-8">
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
         )}
@@ -107,7 +106,7 @@ export default function WorkspaceSettingsPage() {
             {deleting ? '删除中...' : '删除此空间'}
           </button>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
