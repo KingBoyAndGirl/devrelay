@@ -10,7 +10,7 @@ export const config = {
   github: {
     clientId: process.env.GITHUB_CLIENT_ID || '',
     clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
-    callbackUrl: process.env.GITHUB_CALLBACK_URL || 'http://localhost:3000/api/auth/callback/github',
+    callbackUrl: process.env.GITHUB_CALLBACK_URL || 'http://localhost:3000/api/auth/github',
   },
   agents: {
     claudeCodePath: process.env.CLAUDE_CODE_PATH || 'claude',
