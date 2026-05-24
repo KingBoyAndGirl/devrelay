@@ -679,6 +679,41 @@ function startServer(flags: Record<string, string> = {}) {
     res.end(JSON.stringify({ error: 'not found' }));
   }
 
+  async function handleUpdate(req: IncomingMessage, res: ServerResponse) {
+    try {
+      const body = JSON.parse(await readBody(req));
+      const pkg = body.package;
+      if (!pkg || typeof pkg !== 'string') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'missing "package" field' }));
+        return;
+      }
+      // Allow scoped packages, versions, and tags
+      if (!/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*(@[^\s]+)?$/.test(pkg)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid package name' }));
+        return;
+      }
+      console.log(`[devrelay] Updating package: ${pkg}`);
+      const result = execSync(`npm install -g ${pkg} 2>&1`, {
+        timeout: 120000,
+        encoding: 'utf-8',
+        env: { ...process.env, npm_config_loglevel: 'silent' },
+      });
+      // Read new version
+      let newVersion: string | null = null;
+      try {
+        const bin = pkg.startsWith('@') ? pkg.split('/')[1] : pkg;
+        newVersion = execSync(`${bin} --version 2>/dev/null || npm list -g ${pkg} --depth=0 --json 2>/dev/null | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(Object.values(d.dependencies||{})[0]?.version||'')"`, { encoding: 'utf-8', timeout: 10000 }).trim() || null;
+      } catch {}
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, package: pkg, newVersion, output: result.trim().slice(-500) }));
+    } catch (err: any) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message || 'update failed' }));
+    }
+  }
+
   // ── MCP ──────────────────────────────────────────────────────
 
   const SERVER_NAME = 'devrelay';
@@ -848,6 +883,7 @@ function startServer(flags: Record<string, string> = {}) {
 
     if (url.pathname === '/health' && method === 'GET') return handleHealth(req, res);
     if (url.pathname === '/discover' && method === 'GET') return handleDiscover(req, res);
+    if (url.pathname === '/update' && method === 'POST') return handleUpdate(req, res);
     if (url.pathname === '/execute' && method === 'POST') return handleExecute(req, res);
     if (url.pathname === '/mcp' && method === 'POST') { handleMCP(req, res); return; }
     if (url.pathname === '/mcp/sse' && method === 'GET') { handleMCPSSE(req, res); return; }

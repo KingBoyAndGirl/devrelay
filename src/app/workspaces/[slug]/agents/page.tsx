@@ -83,12 +83,34 @@ export default function AgentsPage() {
   const [agentInfos, setAgentInfos] = useState<AgentTokenInfo[]>([]);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [cliUpdates, setCliUpdates] = useState<Record<string, { latest: string; npmPackage: string }>>({});
-  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  const [updating, setUpdating] = useState<Record<string, 'loading' | 'done' | 'error'>>({});
 
-  function copyCmd(cmd: string) {
-    navigator.clipboard.writeText(cmd);
-    setCopiedCmd(cmd);
-    setTimeout(() => setCopiedCmd(null), 2000);
+  async function updatePackage(pkg: string) {
+    setUpdating(prev => ({ ...prev, [pkg]: 'loading' }));
+    try {
+      const res = await fetch(`/api/workspaces/${slug}/agent-info/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ package: pkg }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUpdating(prev => ({ ...prev, [pkg]: 'done' }));
+        // Refresh agent info and CLI versions after update
+        setTimeout(() => {
+          loadAgentInfo();
+          loadLatestVersion();
+          loadCliUpdates();
+          setUpdating(prev => { const n = { ...prev }; delete n[pkg]; return n; });
+        }, 2000);
+      } else {
+        setUpdating(prev => ({ ...prev, [pkg]: 'error' }));
+        setTimeout(() => setUpdating(prev => { const n = { ...prev }; delete n[pkg]; return n; }), 3000);
+      }
+    } catch {
+      setUpdating(prev => ({ ...prev, [pkg]: 'error' }));
+      setTimeout(() => setUpdating(prev => { const n = { ...prev }; delete n[pkg]; return n; }), 3000);
+    }
   }
 
   useEffect(() => {
@@ -295,7 +317,8 @@ export default function AgentsPage() {
             </button>
           </div>
           {agentInfos.length > 0 && agentInfos.some(a => a.agentVersion) && latestVersion && agentInfos.some(a => a.agentVersion && a.agentVersion !== latestVersion) && (() => {
-            const agentUpdateCmd = 'npm update -g devrelay-agent';
+            const pkg = 'devrelay-agent';
+            const st = updating[pkg];
             return (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
                 <div className="flex items-center justify-between">
@@ -305,14 +328,18 @@ export default function AgentsPage() {
                     <span className="text-xs text-gray-400">→</span>
                     <span className="text-xs font-mono text-blue-600">v{latestVersion}</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => copyCmd(agentUpdateCmd)}
-                      className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      {copiedCmd === agentUpdateCmd ? '已复制 ✓' : '复制更新命令'}
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => !st && updatePackage(`devrelay-agent@${latestVersion}`)}
+                    disabled={!!st}
+                    className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                      st === 'loading' ? 'bg-blue-400 text-white cursor-wait' :
+                      st === 'done' ? 'bg-green-600 text-white' :
+                      st === 'error' ? 'bg-red-600 text-white' :
+                      'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
+                  >
+                    {st === 'loading' ? '更新中...' : st === 'done' ? '已更新 ✓' : st === 'error' ? '更新失败' : '立即更新'}
+                  </button>
                 </div>
               </div>
             );
@@ -337,14 +364,21 @@ export default function AgentsPage() {
                   </div>
 
                   {info.agentVersion && latestVersion && info.agentVersion !== latestVersion && (() => {
-                    const cmd = 'npm update -g devrelay-agent';
+                    const pkg = 'devrelay-agent';
+                    const st = updating[pkg];
                     return (
                       <div className="flex items-center gap-2 mb-3">
                         <button
-                          onClick={() => copyCmd(cmd)}
-                          className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                          onClick={() => !st && updatePackage(`devrelay-agent@${latestVersion}`)}
+                          disabled={!!st}
+                          className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors ${
+                            st === 'loading' ? 'bg-blue-400 text-white cursor-wait' :
+                            st === 'done' ? 'bg-green-600 text-white' :
+                            st === 'error' ? 'bg-red-600 text-white' :
+                            'bg-blue-600 text-white hover:bg-blue-700'
+                          }`}
                         >
-                          {copiedCmd === cmd ? '已复制 ✓' : `更新到 v${latestVersion}`}
+                          {st === 'loading' ? '更新中...' : st === 'done' ? '已更新 ✓' : st === 'error' ? '更新失败' : `更新到 v${latestVersion}`}
                         </button>
                       </div>
                     );
@@ -371,7 +405,8 @@ export default function AgentsPage() {
                                 )}
                               </span>
                               {hasUpdate && (() => {
-                                const cmd = `npm install -g ${update.npmPackage}@${update.latest}`;
+                                const pkg = `${update.npmPackage}@${update.latest}`;
+                                const st = updating[pkg];
                                 return (
                                   <>
                                     <span className="text-xs text-gray-400">→</span>
@@ -379,10 +414,16 @@ export default function AgentsPage() {
                                       v{update.latest}
                                     </span>
                                     <button
-                                      onClick={() => copyCmd(cmd)}
-                                      className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                                      onClick={() => !st && updatePackage(pkg)}
+                                      disabled={!!st}
+                                      className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                                        st === 'loading' ? 'bg-blue-400 text-white cursor-wait' :
+                                        st === 'done' ? 'bg-green-600 text-white' :
+                                        st === 'error' ? 'bg-red-600 text-white' :
+                                        'bg-blue-600 text-white hover:bg-blue-700'
+                                      }`}
                                     >
-                                      {copiedCmd === cmd ? '已复制 ✓' : '更新'}
+                                      {st === 'loading' ? '更新中...' : st === 'done' ? '已更新 ✓' : st === 'error' ? '失败' : '更新'}
                                     </button>
                                   </>
                                 );

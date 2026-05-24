@@ -454,7 +454,39 @@ export default function AgentActivityPanel({ slug }: { slug: string }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [agentInfos, setAgentInfos] = useState<AgentTokenInfo[]>([]);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [agentUpdating, setAgentUpdating] = useState<'loading' | 'done' | 'error' | null>(null);
+
+  async function updateAgent(pkg: string) {
+    setAgentUpdating('loading');
+    try {
+      const res = await fetch(`/api/workspaces/${slug}/agent-info/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ package: pkg }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAgentUpdating('done');
+        // Refresh agent info after update
+        setTimeout(async () => {
+          setAgentUpdating(null);
+          try {
+            const r = await fetch(`/api/workspaces/${slug}/agent-info`);
+            if (r.ok) {
+              const d = await r.json();
+              setAgentInfos(d.tokens || []);
+            }
+          } catch {}
+        }, 2000);
+      } else {
+        setAgentUpdating('error');
+        setTimeout(() => setAgentUpdating(null), 3000);
+      }
+    } catch {
+      setAgentUpdating('error');
+      setTimeout(() => setAgentUpdating(null), 3000);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -570,14 +602,19 @@ export default function AgentActivityPanel({ slug }: { slug: string }) {
                     <span className="text-[10px] text-gray-400">Agent v{agentInfos[0].agentVersion}</span>
                     {latestVersion && latestVersion !== agentInfos[0].agentVersion && (
                       <button
-                        onClick={() => {
-                          navigator.clipboard.writeText('npm update -g devrelay-agent');
-                          setCopied(true);
-                          setTimeout(() => setCopied(false), 2000);
-                        }}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 hover:bg-yellow-200 transition-colors"
+                        onClick={() => !agentUpdating && updateAgent(`devrelay-agent@${latestVersion}`)}
+                        disabled={!!agentUpdating}
+                        className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                          agentUpdating === 'loading' ? 'bg-blue-200 text-blue-700 cursor-wait' :
+                          agentUpdating === 'done' ? 'bg-green-200 text-green-700' :
+                          agentUpdating === 'error' ? 'bg-red-200 text-red-700' :
+                          'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+                        }`}
                       >
-                        {copied ? '已复制 ✓' : `v${latestVersion} 可用`}
+                        {agentUpdating === 'loading' ? '更新中...' :
+                         agentUpdating === 'done' ? '已更新 ✓' :
+                         agentUpdating === 'error' ? '失败' :
+                         `v${latestVersion} 可用`}
                       </button>
                     )}
                   </div>
