@@ -14,6 +14,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Empty token' }, { status: 401 });
   }
 
+  const agentVersion = req.headers.get('x-agent-version') || null;
+
   const allWorkspaces = await db.query.workspaces.findMany();
   for (const ws of allWorkspaces) {
     try {
@@ -26,9 +28,10 @@ export async function GET(req: NextRequest) {
       const legacyMatch = !match && settings.agentToken === token;
 
       if (match || legacyMatch) {
-        // Update lastSeenAt
+        // Update lastSeenAt and agent metadata
         if (match) {
           match.lastSeenAt = new Date().toISOString();
+          if (agentVersion) match.agentVersion = agentVersion;
           await db.update(workspaces)
             .set({ settings: JSON.stringify(settings), updatedAt: new Date().toISOString() })
             .where(eq(workspaces.id, ws.id));

@@ -156,7 +156,7 @@ function cmdStatus() {
   console.log('  Timeout:      ' + (config.timeoutMs / 1000) + 's');
   console.log('');
 
-  // Health check
+  // Health check + discover CLIs
   const http = require('http');
   const req = http.get(`http://localhost:${config.port}/health`, { timeout: 2000 }, (res: any) => {
     let data = '';
@@ -171,7 +171,27 @@ function cmdStatus() {
       } catch {
         console.log('  Status:       RUNNING (unexpected response)');
       }
-      console.log('');
+      // Fetch CLI versions from /discover
+      const headers = config.token ? { Authorization: `Bearer ${config.token}` } : {};
+      const discoverReq = http.get(`http://localhost:${config.port}/discover`, { headers, timeout: 2000 }, (dRes: any) => {
+        let dData = '';
+        dRes.on('data', (chunk: any) => dData += chunk);
+        dRes.on('end', () => {
+          try {
+            const info = JSON.parse(dData);
+            const found = (info.clis || []).filter((c: any) => c.found);
+            if (found.length > 0) {
+              console.log('');
+              console.log('  Detected CLIs:');
+              for (const cli of found) {
+                console.log('    ' + cli.bin.padEnd(16) + (cli.version || '(unknown)'));
+              }
+            }
+          } catch {}
+          console.log('');
+        });
+      });
+      discoverReq.on('error', () => { console.log(''); });
     });
   });
   req.on('error', () => {
@@ -197,7 +217,10 @@ async function cmdTest() {
 
   try {
     const res = await fetch(`${config.serverUrl}/api/agent/verify`, {
-      headers: { Authorization: `Bearer ${config.token}` },
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        'X-Agent-Version': VERSION,
+      },
       signal: AbortSignal.timeout(5000),
     });
 
@@ -280,9 +303,9 @@ function notifyOffline(cfg: AgentConfig = resolveConfig()) {
 
 function cmdStop() {
   const cfg = resolveConfig();
+  console.log(`[devrelay] Stopping agent v${VERSION}...`);
   // Notify server immediately before killing
   notifyOffline(cfg);
-  // Try PID file first, then port detection
   // Try PID file first, then port detection
   let pid: number | null = null;
   if (existsSync(PID_FILE)) {
@@ -330,6 +353,7 @@ function startDaemon(flags: Record<string, string>) {
 function cmdRestart(flags: Record<string, string>) {
   const cfg = resolveConfig();
   if (flags.port) cfg.port = parseInt(flags.port, 10);
+  console.log(`\n[devrelay] Restarting agent v${VERSION}...`);
   // Notify server immediately before killing old process
   notifyOffline(cfg);
   const pid = getPortPid(cfg.port);
@@ -851,10 +875,18 @@ function startServer(flags: Record<string, string> = {}) {
     const clis = discoverCLIs();
     const found = clis.filter((c) => c.found);
     console.log(`\n[devrelay] ========================================`);
+    console.log(`[devrelay]  Version     ${VERSION}`);
     console.log(`[devrelay]  Listening   http://localhost:${PORT}`);
     console.log(`[devrelay]  Auth:       ${AUTH_TOKEN ? 'ENABLED' : 'DISABLED'}`);
     console.log(`[devrelay]  Config:     ${CONFIG_FILE}`);
-    console.log(`[devrelay]  CLIs:       ${found.map(c => c.bin).join(', ') || 'none detected'}`);
+    if (found.length > 0) {
+      console.log(`[devrelay]  CLIs:`);
+      for (const cli of found) {
+        console.log(`[devrelay]    ${cli.bin.padEnd(14)}${cli.version || '(unknown)'}`);
+      }
+    } else {
+      console.log(`[devrelay]  CLIs:       none detected`);
+    }
     console.log(`[devrelay] ========================================\n`);
   });
 
