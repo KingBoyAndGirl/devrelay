@@ -232,6 +232,17 @@ export default function AgentsPage() {
     setTokenLoading(false);
   }
 
+  async function handleRevealAndCopy(id: string) {
+    try {
+      const res = await fetch(`/api/workspaces/${slug}/agent-token?reveal=${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        const cmd = `devrelay configure --token ${data.token} --url ${window.location.origin}`;
+        navigator.clipboard.writeText(cmd);
+      }
+    } catch {}
+  }
+
   async function handleRevokeToken(id: string, name: string) {
     if (!confirm(`撤销令牌 "${name}" 后，对应的 Agent 将无法连接。确定继续？`)) return;
     setTokenLoading(true);
@@ -565,15 +576,13 @@ export default function AgentsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {fullTokens[t.id] && (
-                      <button
-                        onClick={() => { navigator.clipboard.writeText(`devrelay configure --token ${fullTokens[t.id]} --url ${window.location.origin}`); }}
-                        className="text-xs text-blue-500 hover:text-blue-700"
-                        title="复制配置命令"
-                      >
-                        复制
-                      </button>
-                    )}
+                    <button
+                      onClick={() => handleRevealAndCopy(t.id)}
+                      className="text-xs text-blue-500 hover:text-blue-700"
+                      title="复制配置命令"
+                    >
+                      复制
+                    </button>
                     <button
                       onClick={() => handleRevokeToken(t.id, t.name)}
                       disabled={tokenLoading}

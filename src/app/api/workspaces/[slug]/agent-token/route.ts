@@ -42,7 +42,7 @@ async function checkAdmin(ws: any, userId: string): Promise<boolean> {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { slug: string } }
 ) {
   const session = await auth();
@@ -61,6 +61,14 @@ export async function GET(
     await db.update(workspaces)
       .set({ settings: JSON.stringify(settings), updatedAt: new Date().toISOString() })
       .where(eq(workspaces.id, ws.id));
+  }
+
+  // Reveal full token for a specific ID
+  const revealId = req.nextUrl.searchParams.get('reveal');
+  if (revealId) {
+    const token = tokens.find((t: AgentToken) => t.id === revealId);
+    if (!token) return NextResponse.json({ error: 'Token not found' }, { status: 404 });
+    return NextResponse.json({ id: token.id, name: token.name, token: token.token });
   }
 
   const now = Date.now();
