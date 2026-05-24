@@ -156,6 +156,12 @@ function cmdStatus() {
   console.log('  Timeout:      ' + (config.timeoutMs / 1000) + 's');
   console.log('');
 
+  // Sync status to server
+  if (config.token && config.serverUrl) {
+    console.log('  Syncing status to server...');
+    notifyOnline(config);
+  }
+
   // Health check + discover CLIs
   const http = require('http');
   const req = http.get(`http://localhost:${config.port}/health`, { timeout: 2000 }, (res: any) => {
@@ -301,10 +307,22 @@ function notifyOffline(cfg: AgentConfig = resolveConfig()) {
   } catch {}
 }
 
+// Ping server to sync online status (synchronous, blocks until done)
+function notifyOnline(cfg: AgentConfig = resolveConfig()) {
+  if (!cfg.token || !cfg.serverUrl) return;
+  try {
+    const url = `${cfg.serverUrl}/api/agent/verify`;
+    execSync(`curl -s -H "Authorization: Bearer ${cfg.token}" -H "X-Agent-Version: ${VERSION}" -m 3 "${url}"`, { timeout: 5000 });
+  } catch {}
+}
+
 function cmdStop() {
   const cfg = resolveConfig();
   console.log(`[devrelay] Stopping agent v${VERSION}...`);
-  // Notify server immediately before killing
+  // Sync offline status to server before killing
+  if (cfg.token && cfg.serverUrl) {
+    console.log(`[devrelay] Syncing offline status to server...`);
+  }
   notifyOffline(cfg);
   // Try PID file first, then port detection
   let pid: number | null = null;
@@ -354,7 +372,7 @@ function cmdRestart(flags: Record<string, string>) {
   const cfg = resolveConfig();
   if (flags.port) cfg.port = parseInt(flags.port, 10);
   console.log(`\n[devrelay] Restarting agent v${VERSION}...`);
-  // Notify server immediately before killing old process
+  // Notify server: going offline then will come back online
   notifyOffline(cfg);
   const pid = getPortPid(cfg.port);
   if (pid) {
