@@ -679,35 +679,62 @@ function startServer(flags: Record<string, string> = {}) {
     res.end(JSON.stringify({ error: 'not found' }));
   }
 
+  const NATIVE_UPDATE: Record<string, string> = {
+    claude: 'claude update',
+    codex: 'codex update',
+    hermes: 'hermes update',
+  };
+
   async function handleUpdate(req: IncomingMessage, res: ServerResponse) {
     try {
       const body = JSON.parse(await readBody(req));
-      const pkg = body.package;
-      if (!pkg || typeof pkg !== 'string') {
+      const { cli, package: pkg } = body as { cli?: string; package?: string };
+
+      if (!cli && !pkg) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'missing "package" field' }));
+        res.end(JSON.stringify({ error: 'missing "cli" or "package" field' }));
         return;
       }
-      // Allow scoped packages, versions, and tags
-      if (!/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*(@[^\s]+)?$/.test(pkg)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'invalid package name' }));
-        return;
+
+      let output: string;
+      let updateTarget: string;
+
+      if (cli) {
+        if (!NATIVE_UPDATE[cli]) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: `unsupported CLI: ${cli}` }));
+          return;
+        }
+        updateTarget = cli;
+        console.log(`[devrelay] Running native update: ${NATIVE_UPDATE[cli]}`);
+        output = execSync(`${NATIVE_UPDATE[cli]} 2>&1`, {
+          timeout: 120000,
+          encoding: 'utf-8',
+        });
+      } else {
+        if (!/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*(@[^\s]+)?$/.test(pkg!)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid package name' }));
+          return;
+        }
+        updateTarget = pkg!;
+        console.log(`[devrelay] npm install -g: ${pkg}`);
+        output = execSync(`npm install -g ${pkg} 2>&1`, {
+          timeout: 120000,
+          encoding: 'utf-8',
+          env: { ...process.env, npm_config_loglevel: 'silent' },
+        });
       }
-      console.log(`[devrelay] Updating package: ${pkg}`);
-      const result = execSync(`npm install -g ${pkg} 2>&1`, {
-        timeout: 120000,
-        encoding: 'utf-8',
-        env: { ...process.env, npm_config_loglevel: 'silent' },
-      });
+
       // Read new version
       let newVersion: string | null = null;
       try {
-        const bin = pkg.startsWith('@') ? pkg.split('/')[1] : pkg;
-        newVersion = execSync(`${bin} --version 2>/dev/null || npm list -g ${pkg} --depth=0 --json 2>/dev/null | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(Object.values(d.dependencies||{})[0]?.version||'')"`, { encoding: 'utf-8', timeout: 10000 }).trim() || null;
+        const bin = cli || (pkg!.startsWith('@') ? pkg!.split('/')[1] : pkg!);
+        newVersion = execSync(`${bin} --version 2>/dev/null || npm list -g ${pkg || cli} --depth=0 --json 2>/dev/null | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(Object.values(d.dependencies||{})[0]?.version||'')"`, { encoding: 'utf-8', timeout: 10000 }).trim() || null;
       } catch {}
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, package: pkg, newVersion, output: result.trim().slice(-500) }));
+      res.end(JSON.stringify({ success: true, package: updateTarget, newVersion, output: output.trim().slice(-500) }));
     } catch (err: any) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message || 'update failed' }));

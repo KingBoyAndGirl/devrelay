@@ -19,9 +19,9 @@ export async function POST(
   if (!ws) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
-  const pkg = body.package;
-  if (!pkg || typeof pkg !== 'string') {
-    return NextResponse.json({ error: 'missing "package" field' }, { status: 400 });
+  const { cli, package: pkg } = body as { cli?: string; package?: string };
+  if (!cli && (!pkg || typeof pkg !== 'string')) {
+    return NextResponse.json({ error: 'missing "cli" or "package" field' }, { status: 400 });
   }
 
   // Forward to sidecar
@@ -38,7 +38,7 @@ export async function POST(
     const res = await fetch(`http://localhost:${port}/update`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ package: pkg }),
+      body: JSON.stringify(cli ? { cli } : { package: pkg }),
       signal: AbortSignal.timeout(120000),
     });
     const data = await res.json();

@@ -113,6 +113,33 @@ export default function AgentsPage() {
     }
   }
 
+  async function updateCli(cliName: string) {
+    setUpdating(prev => ({ ...prev, [cliName]: 'loading' }));
+    try {
+      const res = await fetch(`/api/workspaces/${slug}/agent-info/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cli: cliName }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUpdating(prev => ({ ...prev, [cliName]: 'done' }));
+        setTimeout(() => {
+          loadAgentInfo();
+          loadLatestVersion();
+          loadCliUpdates();
+          setUpdating(prev => { const n = { ...prev }; delete n[cliName]; return n; });
+        }, 2000);
+      } else {
+        setUpdating(prev => ({ ...prev, [cliName]: 'error' }));
+        setTimeout(() => setUpdating(prev => { const n = { ...prev }; delete n[cliName]; return n; }), 3000);
+      }
+    } catch {
+      setUpdating(prev => ({ ...prev, [cliName]: 'error' }));
+      setTimeout(() => setUpdating(prev => { const n = { ...prev }; delete n[cliName]; return n; }), 3000);
+    }
+  }
+
   useEffect(() => {
     fetch(`/api/workspaces/${slug}/agents`)
       .then(r => r.json())
@@ -405,8 +432,7 @@ export default function AgentsPage() {
                                 )}
                               </span>
                               {hasUpdate && (() => {
-                                const pkg = `${update.npmPackage}@${update.latest}`;
-                                const st = updating[pkg];
+                                const st = updating[cli.bin];
                                 return (
                                   <>
                                     <span className="text-xs text-gray-400">→</span>
@@ -414,7 +440,7 @@ export default function AgentsPage() {
                                       v{update.latest}
                                     </span>
                                     <button
-                                      onClick={() => !st && updatePackage(pkg)}
+                                      onClick={() => !st && updateCli(cli.bin)}
                                       disabled={!!st}
                                       className={`text-xs px-2 py-0.5 rounded transition-colors ${
                                         st === 'loading' ? 'bg-blue-400 text-white cursor-wait' :
