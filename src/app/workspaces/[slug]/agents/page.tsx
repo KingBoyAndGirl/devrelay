@@ -83,6 +83,13 @@ export default function AgentsPage() {
   const [agentInfos, setAgentInfos] = useState<AgentTokenInfo[]>([]);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [cliUpdates, setCliUpdates] = useState<Record<string, { latest: string; npmPackage: string }>>({});
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+
+  function copyCmd(cmd: string) {
+    navigator.clipboard.writeText(cmd);
+    setCopiedCmd(cmd);
+    setTimeout(() => setCopiedCmd(null), 2000);
+  }
 
   useEffect(() => {
     fetch(`/api/workspaces/${slug}/agents`)
@@ -287,15 +294,29 @@ export default function AgentsPage() {
               刷新
             </button>
           </div>
-          {agentInfos.length > 0 && agentInfos.some(a => a.agentVersion) && latestVersion && agentInfos.some(a => a.agentVersion && a.agentVersion !== latestVersion) && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-yellow-600 text-sm">有新版本可用</span>
-                <code className="text-xs bg-white px-1.5 py-0.5 rounded border border-yellow-300">v{latestVersion}</code>
+          {agentInfos.length > 0 && agentInfos.some(a => a.agentVersion) && latestVersion && agentInfos.some(a => a.agentVersion && a.agentVersion !== latestVersion) && (() => {
+            const agentUpdateCmd = 'npm update -g devrelay-agent';
+            return (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-yellow-700 text-sm font-medium">devrelay-agent 有新版本</span>
+                    <span className="text-xs text-gray-400">v{agentInfos.find(a => a.agentVersion)?.agentVersion}</span>
+                    <span className="text-xs text-gray-400">→</span>
+                    <span className="text-xs font-mono text-blue-600">v{latestVersion}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => copyCmd(agentUpdateCmd)}
+                      className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      {copiedCmd === agentUpdateCmd ? '已复制 ✓' : '复制更新命令'}
+                    </button>
+                  </div>
+                </div>
               </div>
-              <code className="text-xs bg-gray-800 text-green-400 px-2 py-1 rounded">npm update -g devrelay-agent</code>
-            </div>
-          )}
+            );
+          })()}
           {agentInfos.length === 0 ? (
             <p className="text-sm text-gray-400">暂无已连接的 Agent</p>
           ) : (
@@ -315,25 +336,19 @@ export default function AgentsPage() {
                     )}
                   </div>
 
-                  {info.agentVersion && (
-                    <div className="flex items-center gap-2 mb-3 text-xs">
-                      <span className="text-gray-400">
-                        最新版本请查看{' '}
-                        <a
-                          href="https://www.npmjs.com/package/devrelay-agent"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-500 hover:underline"
+                  {info.agentVersion && latestVersion && info.agentVersion !== latestVersion && (() => {
+                    const cmd = 'npm update -g devrelay-agent';
+                    return (
+                      <div className="flex items-center gap-2 mb-3">
+                        <button
+                          onClick={() => copyCmd(cmd)}
+                          className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                         >
-                          npm
-                        </a>
-                      </span>
-                      <span className="text-gray-400">·</span>
-                      <code className="text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded">
-                        npm update -g devrelay-agent
-                      </code>
-                    </div>
-                  )}
+                          {copiedCmd === cmd ? '已复制 ✓' : `更新到 v${latestVersion}`}
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   {(info.cliDetails || []).length > 0 && (
                     <div className="mb-3">
@@ -355,22 +370,23 @@ export default function AgentsPage() {
                                   <span className="font-mono opacity-70">{cli.version}</span>
                                 )}
                               </span>
-                              {hasUpdate && (
-                                <>
-                                  <span className="text-xs text-gray-400">→</span>
-                                  <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-200 font-mono">
-                                    v{update.latest}
-                                  </span>
-                                  <a
-                                    href={`https://www.npmjs.com/package/${update.npmPackage}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700"
-                                  >
-                                    更新
-                                  </a>
-                                </>
-                              )}
+                              {hasUpdate && (() => {
+                                const cmd = `npm install -g ${update.npmPackage}@${update.latest}`;
+                                return (
+                                  <>
+                                    <span className="text-xs text-gray-400">→</span>
+                                    <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-200 font-mono">
+                                      v{update.latest}
+                                    </span>
+                                    <button
+                                      onClick={() => copyCmd(cmd)}
+                                      className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                                    >
+                                      {copiedCmd === cmd ? '已复制 ✓' : '更新'}
+                                    </button>
+                                  </>
+                                );
+                              })()}
                             </div>
                           );
                         })}

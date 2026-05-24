@@ -454,6 +454,7 @@ export default function AgentActivityPanel({ slug }: { slug: string }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [agentInfos, setAgentInfos] = useState<AgentTokenInfo[]>([]);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -568,14 +569,16 @@ export default function AgentActivityPanel({ slug }: { slug: string }) {
                   <div className="flex items-center gap-2 mt-1.5">
                     <span className="text-[10px] text-gray-400">Agent v{agentInfos[0].agentVersion}</span>
                     {latestVersion && latestVersion !== agentInfos[0].agentVersion && (
-                      <a
-                        href="https://www.npmjs.com/package/devrelay-agent"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 hover:bg-yellow-200"
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText('npm update -g devrelay-agent');
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 hover:bg-yellow-200 transition-colors"
                       >
-                        v{latestVersion} 可用
-                      </a>
+                        {copied ? '已复制 ✓' : `v${latestVersion} 可用`}
+                      </button>
                     )}
                   </div>
                 )}
