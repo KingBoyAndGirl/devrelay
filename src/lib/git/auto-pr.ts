@@ -1,6 +1,6 @@
 import { db } from '@/lib/db/client';
-import { tasks, repositories, pullRequests, stages, projectRepos, activities } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { tasks, repositories, pullRequests, issues, stages, projectRepos, activities } from '@/lib/db/schema';
+import { eq, and, inArray } from 'drizzle-orm';
 import { simpleGit } from 'simple-git';
 import { getRepoWorkdir, ensureWorktree } from './worktree';
 import { createOctokit } from '@/lib/github';
@@ -151,13 +151,12 @@ export async function createPRForTask(
 
     const now = new Date().toISOString();
 
-    // Find the appropriate stage (development = step 7, or the current in-progress stage)
-    const inProgressStage = await db.query.stages.findFirst({
-      where: and(
-        eq(stages.projectId, projectId),
-        eq(stages.status, 'in_progress'),
-      ),
-    });
+    // Find the current in-progress stage across all project issues
+    const projIssues = await db.query.issues.findMany({ where: eq(issues.projectId, projectId), columns: { id: true } });
+    const projIssueIds = projIssues.map(i => i.id);
+    const inProgressStage = projIssueIds.length > 0 ? await db.query.stages.findFirst({
+      where: and(inArray(stages.issueId, projIssueIds), eq(stages.status, 'in_progress')),
+    }) : null;
 
     const prId = createId();
     await db.insert(pullRequests).values({
@@ -185,10 +184,10 @@ export async function createPRForTask(
       })
       .where(eq(tasks.id, taskId));
 
-    // If code review stage (step 8) is pending, start it
-    const reviewStage = await db.query.stages.findFirst({
-      where: and(eq(stages.projectId, projectId), eq(stages.step, 8)),
-    });
+    // If code review stage is pending, start it
+    const reviewStage = projIssueIds.length > 0 ? await db.query.stages.findFirst({
+      where: and(inArray(stages.issueId, projIssueIds), eq(stages.name, '代码评审')),
+    }) : null;
     if (reviewStage && reviewStage.status === 'pending') {
       await db
         .update(stages)

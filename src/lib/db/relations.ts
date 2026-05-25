@@ -7,6 +7,7 @@ import {
   repositories,
   projects,
   projectRepos,
+  issues,
   stages,
   documents,
   tasks,
@@ -64,7 +65,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
     references: [workspaces.id],
   }),
   projectRepos: many(projectRepos),
-  stages: many(stages),
+  issues: many(issues),
   documents: many(documents),
   tasks: many(tasks),
   agentProjects: many(agentProjects),
@@ -84,11 +85,19 @@ export const projectReposRelations = relations(projectRepos, ({ one }) => ({
 }));
 
 export const stagesRelations = relations(stages, ({ one, many }) => ({
-  project: one(projects, {
-    fields: [stages.projectId],
-    references: [projects.id],
+  issue: one(issues, {
+    fields: [stages.issueId],
+    references: [issues.id],
   }),
   documents: many(documents),
+}));
+
+export const issuesRelations = relations(issues, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [issues.projectId],
+    references: [projects.id],
+  }),
+  stages: many(stages),
 }));
 
 export const documentsRelations = relations(documents, ({ one }) => ({

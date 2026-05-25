@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { stages } from '@/lib/db/schema';
+import { issues, stages } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { projects } from '@/lib/db/schema';
-import { approveStage, rejectStage } from '@/lib/workflow';
-import { notifyStageTransition } from '@/lib/notify';
+import { approveIssueStage, rejectIssueStage } from '@/lib/workflow';
 
 export async function PUT(
   req: NextRequest,
@@ -17,20 +15,20 @@ export async function PUT(
   }
 
   const step = parseInt(params.step);
-  if (isNaN(step) || step < 1 || step > 13) {
+  if (isNaN(step) || step < 1) {
     return NextResponse.json({ error: 'Invalid step' }, { status: 400 });
   }
 
   const stage = await db.query.stages.findFirst({
-    where: and(eq(stages.projectId, params.id), eq(stages.step, step)),
+    where: and(eq(stages.issueId, params.id), eq(stages.step, step)),
   });
 
   if (!stage) {
     return NextResponse.json({ error: 'Stage not found' }, { status: 404 });
   }
 
-  const project = await db.query.projects.findFirst({
-    where: eq(projects.id, params.id),
+  const issue = await db.query.issues.findFirst({
+    where: eq(issues.id, params.id),
   });
 
   const { action, reviewNotes, requiredRole } = await req.json();
@@ -40,10 +38,10 @@ export async function PUT(
     await db
       .update(stages)
       .set({ requiredRole })
-      .where(and(eq(stages.projectId, params.id), eq(stages.step, step)));
+      .where(and(eq(stages.issueId, params.id), eq(stages.step, step)));
 
     const updatedStages = await db.query.stages.findMany({
-      where: eq(stages.projectId, params.id),
+      where: eq(stages.issueId, params.id),
       orderBy: (stages, { asc }) => [asc(stages.step)],
     });
     return NextResponse.json(updatedStages);
@@ -53,46 +51,34 @@ export async function PUT(
     if (stage.status !== 'in_progress') {
       return NextResponse.json({ error: '只能通过进行中的阶段' }, { status: 400 });
     }
-    await approveStage(params.id, step);
-    if (project) {
-      await notifyStageTransition({
-        projectId: params.id,
-        projectName: project.name,
-        stageStep: step,
-        stageName: stage.name,
-        action: 'approved',
-      });
+    await approveIssueStage(params.id, step);
+
+    // Update issue status to in_progress if it was backlog
+    if (issue && issue.status === 'backlog') {
+      await db.update(issues)
+        .set({ status: 'in_progress', updatedAt: new Date().toISOString() })
+        .where(eq(issues.id, params.id));
     }
   } else if (action === 'reject') {
     if (stage.status !== 'in_progress') {
       return NextResponse.json({ error: '只能驳回进行中的阶段' }, { status: 400 });
     }
-    await rejectStage(params.id, step, reviewNotes || '');
-    if (project) {
-      await notifyStageTransition({
-        projectId: params.id,
-        projectName: project.name,
-        stageStep: step,
-        stageName: stage.name,
-        action: 'rejected',
-        reviewNotes: reviewNotes || '',
-      });
-    }
+    await rejectIssueStage(params.id, step, reviewNotes || '');
   } else {
     return NextResponse.json({ error: 'Invalid action. Use "approve" or "reject"' }, { status: 400 });
   }
 
   const updatedStages = await db.query.stages.findMany({
-    where: eq(stages.projectId, params.id),
+    where: eq(stages.issueId, params.id),
     orderBy: (stages, { asc }) => [asc(stages.step)],
   });
 
-  // Broadcast stage update to all clients viewing this project
+  // Broadcast stage update
   try {
     const io = (globalThis as any).io;
     if (io) {
-      io.to(`project:${params.id}`).emit('stage_update', {
-        projectId: params.id,
+      io.to(`project:${issue?.projectId}`).emit('stage_update', {
+        issueId: params.id,
         step,
         stageName: stage.name,
         status: action === 'approve' ? 'completed' : 'rejected',

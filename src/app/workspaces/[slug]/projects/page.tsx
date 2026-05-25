@@ -12,8 +12,13 @@ interface Project {
   description: string | null;
   customer: string | null;
   status: string;
-  stages: Array<{ step: number; status: string }>;
+  issues?: Array<{ stages?: Array<{ step: number; status: string }> }>;
   createdAt: string;
+}
+
+function getStages(p: Project) {
+  if (!p.issues) return [];
+  return p.issues.flatMap((i) => i.stages || []);
 }
 
 export default function ProjectsPage({ params: _params }: { params: { slug: string } }) {
@@ -32,7 +37,8 @@ export default function ProjectsPage({ params: _params }: { params: { slug: stri
       .catch(() => setLoading(false));
   }, [slug]);
 
-  function progress(stages: Project['stages']) {
+  function progress(p: Project) {
+    const stages = getStages(p);
     const done = stages.filter(s => s.status === 'completed').length;
     return stages.length ? Math.round((done / stages.length) * 100) : 0;
   }
@@ -100,10 +106,10 @@ export default function ProjectsPage({ params: _params }: { params: { slug: stri
                   <div className="flex-1 bg-gray-100 rounded-full h-2">
                     <div
                       className="bg-blue-600 h-2 rounded-full transition-all"
-                      style={{ width: `${progress(p.stages)}%` }}
+                      style={{ width: `${progress(p)}%` }}
                     />
                   </div>
-                  <span className="text-xs text-gray-500">{progress(p.stages)}%</span>
+                  <span className="text-xs text-gray-500">{progress(p)}%</span>
                 </div>
               </Link>
             ))}

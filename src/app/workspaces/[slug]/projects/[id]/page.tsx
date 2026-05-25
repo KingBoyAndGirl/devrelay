@@ -4,15 +4,53 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { toast } from 'sonner';
+import { Plus } from 'lucide-react';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
 import ActivityFeed from '@/components/activities/ActivityFeed';
 import { KeyboardShortcuts } from '@/components/ui/KeyboardShortcuts';
-import { StageCard } from './StageCard';
 import { StageTimeline } from './StageTimeline';
 import { AgentAssignmentPanel } from './AgentAssignmentPanel';
-import { OnboardingTooltip } from '@/components/ui/OnboardingTooltip';
-import type { Project, Comment, WorkspaceAgent } from './types';
+import { IssueCard } from './IssueCard';
+import type { WorkspaceAgent } from './types';
+
+interface IssueStage {
+  id: string;
+  step: number;
+  name: string;
+  status: string;
+}
+
+interface Issue {
+  id: string;
+  projectId: string;
+  type: string;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  assignedAgentId: string | null;
+  assignedAgentName?: string | null;
+  stages: IssueStage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProjectInfo {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  issueCount: number;
+  progress: number;
+}
+
+const COLUMNS = [
+  { key: 'backlog', label: '待规划', color: 'bg-gray-50 border-gray-200' },
+  { key: 'in_progress', label: '进行中', color: 'bg-blue-50 border-blue-200' },
+  { key: 'in_review', label: '评审中', color: 'bg-yellow-50 border-yellow-200' },
+  { key: 'done', label: '已完成', color: 'bg-green-50 border-green-200' },
+];
 
 export default function ProjectDetailPage() {
   const routeParams = useParams();
@@ -20,74 +58,34 @@ export default function ProjectDetailPage() {
   const slug = routeParams.slug as string;
   const id = routeParams.id as string;
 
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
-  const [acting, setActing] = useState<number | null>(null);
-  const [assigning, setAssigning] = useState<number | null>(null);
-  const [rejectNotes, setRejectNotes] = useState('');
-  const [showReject, setShowReject] = useState<number | null>(null);
-  const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
-  const [comments, setComments] = useState<Record<string, Comment[]>>({});
-  const [commentText, setCommentText] = useState<Record<string, string>>({});
-  const [submittingComment, setSubmittingComment] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [showCompletedStages, setShowCompletedStages] = useState(false);
-  const [focusMode, setFocusMode] = useState(true);
-  const [editingRole, setEditingRole] = useState<number | null>(null);
-  const [deployVersion, setDeployVersion] = useState('');
-  const [deploying, setDeploying] = useState(false);
-  const [feedbackType, setFeedbackType] = useState('feedback');
-  const [feedbackTitle, setFeedbackTitle] = useState('');
-  const [feedbackSeverity, setFeedbackSeverity] = useState('medium');
-  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const [pinnedActivity, setPinnedActivity] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+  const [draggingIssueId, setDraggingIssueId] = useState<string | null>(null);
   const [showAgentAssign, setShowAgentAssign] = useState(false);
   const [workspaceAgents, setWorkspaceAgents] = useState<WorkspaceAgent[]>([]);
   const [savingAgents, setSavingAgents] = useState(false);
-  const [showShortcuts, setShowShortcuts] = useState(false);
-  const [showActivity, setShowActivity] = useState(false);
-  const [pinnedActivity, setPinnedActivity] = useState(false);
 
   useEffect(() => {
-    fetchProject();
+    fetchData();
   }, [id]);
 
-  // Socket.io real-time collaboration
+  // Socket.io real-time updates
   useEffect(() => {
     const socket: Socket = io({ transports: ['websocket', 'polling'] });
-
     socket.emit('subscribe:project', id);
 
-    socket.on('stage_update', (data: {
-      projectId: string; step: number; stageName: string;
-      status: string; reviewNotes: string; action: string;
-      userId: string; userName: string;
-    }) => {
-      setProject(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          stages: prev.stages.map(s =>
-            s.step === data.step
-              ? {
-                  ...s,
-                  status: data.status,
-                  ...(data.reviewNotes ? { reviewNotes: data.reviewNotes } : {}),
-                  ...(data.status === 'completed' ? { completedAt: new Date().toISOString() } : {}),
-                }
-              : s
-          ),
-        };
-      });
+    socket.on('stage_update', () => {
+      fetchIssues();
     });
 
-    socket.on('comment', (comment: Comment) => {
-      const sid = comment.stageId;
-      if (sid) {
-        setComments(prev => ({
-          ...prev,
-          [sid]: [comment, ...(prev[sid] || [])],
-        }));
-      }
+    socket.on('comment', () => {
+      // Handled in issue detail; no-op at kanban level
     });
 
     return () => {
@@ -104,251 +102,91 @@ export default function ProjectDetailPage() {
 
       if (e.key === '?') {
         e.preventDefault();
-        setShowShortcuts(prev => !prev);
-        return;
-      }
-
-      if (!project) return;
-
-      const inProgress = project.stages.filter(s => s.status === 'in_progress');
-
-      if (e.key === 'a' || e.key === 'A') {
-        e.preventDefault();
-        if (inProgress.length === 1) handleApprove(inProgress[0].step);
-      }
-
-      if (e.key === 'r' || e.key === 'R') {
-        e.preventDefault();
-        if (inProgress.length === 1) {
-          const step = inProgress[0].step;
-          setShowReject(prev => prev === step ? null : step);
-        }
-      }
-
-      if (e.key === 'j' || e.key === 'J') {
-        e.preventDefault();
-        const idx = project.stages.findIndex(s => s.status === 'in_progress');
-        if (idx >= 0 && idx < project.stages.length - 1) {
-          document.getElementById(`stage-${project.stages[idx + 1].step}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }
-
-      if (e.key === 'k' || e.key === 'K') {
-        e.preventDefault();
-        const idx = project.stages.findIndex(s => s.status === 'in_progress');
-        if (idx > 0) {
-          document.getElementById(`stage-${project.stages[idx - 1].step}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-      }
-
-      if (e.key === 'n' || e.key === 'N') {
-        e.preventDefault();
-        if (inProgress.length === 1) {
-          const stageId = inProgress[0].id;
-          setExpandedComments(prev => {
-            const next = new Set(prev);
-            next.add(stageId);
-            return next;
-          });
-          setTimeout(() => {
-            const el = document.querySelector(`[data-comment-input="${stageId}"]`) as HTMLInputElement;
-            el?.focus();
-          }, 100);
-        }
+        setShowShortcuts((prev) => !prev);
       }
     }
-
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [project]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (!(e.target as HTMLElement).closest('[data-role-dropdown]')) {
-        setEditingRole(null);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  async function fetchProject() {
-    const res = await fetch(`/api/projects/${id}`);
-    const data = await res.json();
-    setProject(data);
+  async function fetchData() {
+    const [projRes, issuesRes] = await Promise.all([
+      fetch(`/api/projects/${id}`),
+      fetch(`/api/projects/${id}/issues`),
+    ]);
+    if (projRes.ok) {
+      const data = await projRes.json();
+      setProject(data);
+    }
+    if (issuesRes.ok) {
+      setIssues(await issuesRes.json());
+    }
     setLoading(false);
   }
 
-  async function handleApprove(step: number) {
-    const prevStages = [...project!.stages];
-    setProject(prev => ({
-      ...prev!,
-      stages: prev!.stages.map(s =>
-        s.step === step ? { ...s, status: 'completed', completedAt: new Date().toISOString() } : s
-      ),
-    }));
-    setActing(step);
+  async function fetchIssues() {
+    const res = await fetch(`/api/projects/${id}/issues`);
+    if (res.ok) setIssues(await res.json());
+  }
+
+  async function updateIssueStatus(issueId: string, newStatus: string) {
+    // Optimistic update
+    const prev = [...issues];
+    setIssues(issues.map((i) => (i.id === issueId ? { ...i, status: newStatus } : i)));
     try {
-      await fetch(`/api/projects/${id}/stages/${step}`, {
+      await fetch(`/api/issues/${issueId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'approve' }),
+        body: JSON.stringify({ status: newStatus }),
       });
-      toast.success(`阶段 ${step} 已通过`);
     } catch {
-      setProject(prev => ({ ...prev!, stages: prevStages }));
-      toast.error('操作失败，请重试');
-    } finally {
-      setActing(null);
-      fetchProject();
+      setIssues(prev);
+      toast.error('状态更新失败');
     }
   }
 
-  async function handleAutoAssign(step: number) {
-    setAssigning(step);
-    try {
-      await fetch(`/api/projects/${id}/stages/auto-assign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ step }),
-      });
-      toast.success(`阶段 ${step} 已自动分配`);
-    } catch {
-      toast.error('分配失败');
-    } finally {
-      setAssigning(null);
-      fetchProject();
-    }
+  function handleDragStart(e: React.DragEvent, issueId: string) {
+    e.dataTransfer.setData('text/plain', issueId);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggingIssueId(issueId);
   }
 
-  async function handleReject(step: number) {
-    const prevStages = [...project!.stages];
-    setProject(prev => ({
-      ...prev!,
-      stages: prev!.stages.map(s =>
-        s.step === step ? { ...s, status: 'rejected', reviewNotes: rejectNotes } : s
-      ),
-    }));
-    setShowReject(null);
-    setActing(step);
-    try {
-      await fetch(`/api/projects/${id}/stages/${step}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reject', reviewNotes: rejectNotes }),
-      });
-      toast.success(`阶段 ${step} 已驳回`);
-    } catch {
-      setProject(prev => ({ ...prev!, stages: prevStages }));
-      toast.error('操作失败，请重试');
-    } finally {
-      setActing(null);
-      setRejectNotes('');
-      fetchProject();
-    }
+  function handleDragEnd() {
+    setDraggingIssueId(null);
+    setDragOverColumn(null);
   }
 
-  async function toggleComments(stageId: string) {
-    const next = new Set(expandedComments);
-    if (next.has(stageId)) {
-      next.delete(stageId);
-    } else {
-      next.add(stageId);
-      if (!comments[stageId]) {
-        const res = await fetch(`/api/projects/${id}/comments?stageId=${stageId}`);
-        const data = await res.json();
-        setComments(prev => ({ ...prev, [stageId]: data }));
-      }
-    }
-    setExpandedComments(next);
+  function handleDragOver(e: React.DragEvent, columnKey: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverColumn !== columnKey) setDragOverColumn(columnKey);
   }
 
-  async function handlePostComment(stageId: string) {
-    const text = commentText[stageId];
-    if (!text?.trim()) return;
-    setSubmittingComment(prev => ({ ...prev, [stageId]: true }));
-
-    const tempId = `temp-${Date.now()}`;
-    const optimisticComment: Comment = {
-      id: tempId, userId: '', userName: null,
-      content: text, stageId, createdAt: new Date().toISOString(),
-    };
-    setComments(prev => ({
-      ...prev,
-      [stageId]: [optimisticComment, ...(prev[stageId] || [])],
-    }));
-    setCommentText(prev => ({ ...prev, [stageId]: '' }));
-
-    try {
-      await fetch(`/api/projects/${id}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: text, stageId }),
-      });
-      const res = await fetch(`/api/projects/${id}/comments?stageId=${stageId}`);
-      const data = await res.json();
-      setComments(prev => ({ ...prev, [stageId]: data }));
-    } catch {
-      setComments(prev => ({
-        ...prev,
-        [stageId]: (prev[stageId] || []).filter(c => c.id !== tempId),
-      }));
-      toast.error('评论发送失败');
-    } finally {
-      setSubmittingComment(prev => ({ ...prev, [stageId]: false }));
-    }
+  function handleDragLeave(e: React.DragEvent) {
+    if ((e.currentTarget as HTMLElement).contains(e.relatedTarget as HTMLElement)) return;
+    setDragOverColumn(null);
   }
 
-  async function handleDeploy() {
-    if (!deployVersion.trim()) return;
-    setDeploying(true);
-    try {
-      const res = await fetch(`/api/projects/${id}/deployments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: deployVersion }),
-      });
-      if (res.ok) {
-        toast.success(`部署 ${deployVersion} 已开始`);
-        const dep = await res.json();
-        setTimeout(async () => {
-          await fetch(`/api/projects/${id}/deployments`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ deploymentId: dep.id, status: 'success', log: 'Deployed successfully' }),
-          });
-          toast.success('部署完成');
-          fetchProject();
-        }, 2000);
-      } else {
-        toast.error('部署失败');
-      }
-    } catch {
-      toast.error('部署请求失败');
-    } finally {
-      setDeploying(false);
-      setDeployVersion('');
+  function handleDrop(e: React.DragEvent, targetStatus: string) {
+    e.preventDefault();
+    const issueId = e.dataTransfer.getData('text/plain');
+    if (!issueId) return;
+    const issue = issues.find((i) => i.id === issueId);
+    if (issue && issue.status !== targetStatus) {
+      updateIssueStatus(issueId, targetStatus);
     }
+    setDragOverColumn(null);
+    setDraggingIssueId(null);
   }
 
-  async function handleSubmitFeedback() {
-    if (!feedbackTitle.trim()) return;
-    setSubmittingFeedback(true);
-    try {
-      await fetch(`/api/projects/${id}/feedback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: feedbackType, title: feedbackTitle, severity: feedbackSeverity }),
-      });
-      toast.success('反馈已提交');
-    } catch {
-      toast.error('提交失败');
-    } finally {
-      setSubmittingFeedback(false);
-      setFeedbackTitle('');
-      setFeedbackType('feedback');
-      fetchProject();
-    }
+  function issuesByStatus(status: string) {
+    return issues.filter((i) => i.status === status);
+  }
+
+  async function handleDelete() {
+    await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    toast.success('项目已删除');
+    router.push(`/workspaces/${slug}/projects`);
   }
 
   async function handleArchive() {
@@ -358,7 +196,7 @@ export default function ProjectDetailPage() {
       body: JSON.stringify({ status: 'archived' }),
     });
     toast.success('项目已归档');
-    fetchProject();
+    fetchData();
   }
 
   async function handleUnarchive() {
@@ -368,29 +206,7 @@ export default function ProjectDetailPage() {
       body: JSON.stringify({ status: 'active' }),
     });
     toast.success('项目已恢复');
-    fetchProject();
-  }
-
-  async function handleRoleChange(step: number, requiredRole: string) {
-    const prevStages = [...project!.stages];
-    setProject(prev => ({
-      ...prev!,
-      stages: prev!.stages.map(s =>
-        s.step === step ? { ...s, requiredRole } : s
-      ),
-    }));
-    setEditingRole(null);
-    try {
-      await fetch(`/api/projects/${id}/stages/${step}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requiredRole }),
-      });
-      toast.success('角色已更新');
-    } catch {
-      setProject(prev => ({ ...prev!, stages: prevStages }));
-      toast.error('更新失败');
-    }
+    fetchData();
   }
 
   async function loadAgents() {
@@ -401,7 +217,7 @@ export default function ProjectDetailPage() {
 
   async function saveAgents() {
     setSavingAgents(true);
-    const agentIds = workspaceAgents.filter(a => a.assigned).map(a => a.id);
+    const agentIds = workspaceAgents.filter((a) => a.assigned).map((a) => a.id);
     try {
       await fetch(`/api/projects/${id}/agents`, {
         method: 'PUT',
@@ -418,15 +234,9 @@ export default function ProjectDetailPage() {
   }
 
   function toggleAgent(agentId: string) {
-    setWorkspaceAgents(prev =>
-      prev.map(a => a.id === agentId ? { ...a, assigned: !a.assigned } : a)
+    setWorkspaceAgents((prev) =>
+      prev.map((a) => (a.id === agentId ? { ...a, assigned: !a.assigned } : a))
     );
-  }
-
-  async function handleDelete() {
-    await fetch(`/api/projects/${id}`, { method: 'DELETE' });
-    toast.success('项目已删除');
-    router.push(`/workspaces/${slug}/projects`);
   }
 
   // ── Render ──────────────────────────────────────────────
@@ -447,11 +257,11 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const progress = project.stages.length
-    ? Math.round((project.stages.filter(s => s.status === 'completed').length / project.stages.length) * 100)
-    : 0;
-
-  const allComplete = project.stages.every(s => s.status === 'completed');
+  // Compute overall progress from all issue stages
+  const allStages = issues.flatMap((i) => i.stages || []);
+  const totalStages = allStages.length;
+  const completedStages = allStages.filter((s) => s.status === 'completed').length;
+  const progress = totalStages ? Math.round((completedStages / totalStages) * 100) : 0;
 
   return (
     <>
@@ -463,34 +273,25 @@ export default function ProjectDetailPage() {
         <div className="flex items-center gap-3">
           <div className="flex-1 bg-gray-200 rounded-full h-2.5">
             <div
-              className={`h-2.5 rounded-full transition-all ${allComplete ? 'bg-green-500' : 'bg-blue-600'}`}
+              className={`h-2.5 rounded-full transition-all ${progress === 100 ? 'bg-green-500' : 'bg-blue-600'}`}
               style={{ width: `${progress}%` }}
             />
           </div>
           <span className="text-sm font-medium">{progress}%</span>
+          <span className="text-xs text-gray-400">{issues.length} 个 Issue</span>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 pb-6">
-        {/* Project actions */}
+      <div className="max-w-7xl mx-auto px-6 pb-6">
+        {/* Toolbar */}
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-          {/* View mode toggle */}
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setFocusMode(false)}
-              className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                !focusMode ? 'bg-white text-gray-900 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
-              }`}
+              onClick={() => router.push(`/workspaces/${slug}/projects/${id}/issues/new`)}
+              className="btn-primary btn-sm inline-flex items-center gap-1"
             >
-              全部展示
-            </button>
-            <button
-              onClick={() => setFocusMode(true)}
-              className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                focusMode ? 'bg-white text-gray-900 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              聚焦当前
+              <Plus className="w-3.5 h-3.5" />
+              提 Issue
             </button>
           </div>
 
@@ -502,19 +303,9 @@ export default function ProjectDetailPage() {
               <button onClick={handleUnarchive} className="btn btn-secondary btn-sm">恢复项目</button>
             )}
             <button onClick={() => setConfirmDelete(true)} className="btn btn-danger btn-sm">删除项目</button>
-            {!focusMode && (
-              <button
-                onClick={() => setShowCompletedStages(!showCompletedStages)}
-                className="btn btn-ghost btn-sm"
-              >
-                {showCompletedStages ? '折叠已完成' : '展开已完成'}
-              </button>
-            )}
             <button
               onClick={() => setShowActivity(!showActivity)}
-              className={`btn btn-sm ${
-                showActivity ? 'bg-blue-100 text-blue-700' : 'btn-ghost'
-              }`}
+              className={`btn btn-sm ${showActivity ? 'bg-blue-100 text-blue-700' : 'btn-ghost'}`}
             >
               活动
             </button>
@@ -528,95 +319,46 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
-        {/* Stage Timeline */}
-        <StageTimeline
-          stages={project.stages}
-          onSelectStage={(step) => {
-            if (focusMode) {
-              setFocusMode(false);
-              setShowCompletedStages(true);
-            }
-            setTimeout(() => {
-              document.getElementById(`stage-${step}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }, 50);
-          }}
-        />
-
-        {/* Stage list */}
-        <div className="space-y-3">
-          {project.stages
-            .filter(stage => {
-              if (focusMode) {
-                // Show in-progress, next pending, and rejected stages
-                if (stage.status === 'in_progress' || stage.status === 'rejected') return true;
-                // Show the first pending stage after in-progress
-                const inProgressIdx = project.stages.findIndex(s => s.status === 'in_progress');
-                if (inProgressIdx >= 0) {
-                  const pendingAfter = project.stages.slice(inProgressIdx + 1).find(s => s.status === 'pending');
-                  if (pendingAfter && stage.step === pendingAfter.step) return true;
-                }
-                return false;
-              }
-              return true;
-            })
-            .map((stage, idx) => {
-              const isNewProject = project.stages.every(s => s.status === 'pending');
-              const card = (
-                <StageCard
-                  key={stage.id}
-                  stage={stage}
-                  projectId={id}
-              isHidden={!focusMode && stage.status === 'completed' && !showCompletedStages}
-              acting={acting}
-              assigning={assigning}
-              showReject={showReject}
-              editingRole={editingRole}
-              rejectNotes={rejectNotes}
-              expandedComments={expandedComments}
-              comments={comments}
-              commentText={commentText}
-              submittingComment={submittingComment}
-              latestDeployment={project.latestDeployment}
-              recentFeedback={project.recentFeedback}
-              deployVersion={deployVersion}
-              deploying={deploying}
-              feedbackType={feedbackType}
-              feedbackTitle={feedbackTitle}
-              feedbackSeverity={feedbackSeverity}
-              submittingFeedback={submittingFeedback}
-              onApprove={handleApprove}
-              onReject={handleReject}
-              onAutoAssign={handleAutoAssign}
-              onRoleChange={handleRoleChange}
-              onSetEditingRole={setEditingRole}
-              onSetShowReject={setShowReject}
-              onRejectNotesChange={setRejectNotes}
-              onToggleComments={toggleComments}
-              onCommentTextChange={(stageId, text) => setCommentText(prev => ({ ...prev, [stageId]: text }))}
-              onPostComment={handlePostComment}
-              onDeployVersionChange={setDeployVersion}
-              onDeploy={handleDeploy}
-              onFeedbackTypeChange={setFeedbackType}
-              onFeedbackTitleChange={setFeedbackTitle}
-              onFeedbackSeverityChange={setFeedbackSeverity}
-              onFeedbackSubmit={handleSubmitFeedback}
-                />
-              );
-              if (idx === 0 && isNewProject) {
-                return (
-                  <OnboardingTooltip
-                    key={stage.id}
-                    id="project-first-stage"
-                    title="从这里开始"
-                    description="这是项目的第一个交付阶段。点击「通过」推进进度，或使用键盘快捷键 A/R 快速操作。按 ? 查看更多快捷键。"
-                    position="bottom"
-                  >
-                    {card}
-                  </OnboardingTooltip>
-                );
-              }
-              return card;
-            })}
+        {/* Kanban board */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {COLUMNS.map((col) => {
+            const colIssues = issuesByStatus(col.key);
+            const isDragOver = dragOverColumn === col.key;
+            return (
+              <div
+                key={col.key}
+                className={`rounded-lg border ${col.color} p-3 min-h-[200px] transition-colors ${
+                  isDragOver ? 'ring-2 ring-blue-400 bg-blue-50/50' : ''
+                }`}
+                onDragOver={(e) => handleDragOver(e, col.key)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, col.key)}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-700">{col.label}</h3>
+                  <span className="text-xs text-gray-400 bg-white/80 rounded-full px-2 py-0.5">
+                    {colIssues.length}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {colIssues.map((issue) => (
+                    <IssueCard
+                      key={issue.id}
+                      issue={issue}
+                      slug={slug}
+                      projectId={id}
+                      onDragStart={handleDragStart}
+                    />
+                  ))}
+                  {colIssues.length === 0 && (
+                    <div className="text-center py-8 text-xs text-gray-400">
+                      {isDragOver ? '放置到此处' : '暂无 Issue'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Agent Assignment */}
@@ -624,7 +366,7 @@ export default function ProjectDetailPage() {
           show={showAgentAssign}
           agents={workspaceAgents}
           saving={savingAgents}
-          onToggle={() => showAgentAssign ? setShowAgentAssign(false) : loadAgents()}
+          onToggle={() => (showAgentAssign ? setShowAgentAssign(false) : loadAgents())}
           onAgentToggle={toggleAgent}
           onSave={saveAgents}
         />
@@ -632,15 +374,15 @@ export default function ProjectDetailPage() {
         {/* Activity slide-out panel */}
         {showActivity && (
           <div className="fixed inset-0 z-30 pointer-events-none">
-            {/* Backdrop - only on mobile */}
             <div
               className="absolute inset-0 bg-black/30 md:hidden pointer-events-auto"
               onClick={() => setShowActivity(false)}
             />
-            {/* Panel */}
-            <div className={`absolute top-0 right-0 h-full bg-white border-l border-gray-200 shadow-xl pointer-events-auto transition-all duration-300 ${
-              pinnedActivity ? 'w-80' : 'w-72'
-            } max-md:w-full`}>
+            <div
+              className={`absolute top-0 right-0 h-full bg-white border-l border-gray-200 shadow-xl pointer-events-auto transition-all duration-300 ${
+                pinnedActivity ? 'w-80' : 'w-72'
+              } max-md:w-full`}
+            >
               <div className="flex items-center justify-between p-4 border-b border-gray-100">
                 <h3 className="font-semibold text-sm">活动日志</h3>
                 <div className="flex items-center gap-1">
@@ -649,7 +391,6 @@ export default function ProjectDetailPage() {
                     className={`text-xs px-2 py-1 rounded transition-colors ${
                       pinnedActivity ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:text-gray-600'
                     }`}
-                    title={pinnedActivity ? '取消固定' : '固定'}
                   >
                     {pinnedActivity ? '已固定' : '固定'}
                   </button>
@@ -668,7 +409,7 @@ export default function ProjectDetailPage() {
           </div>
         )}
 
-        {/* Static Activity Feed (hidden when panel is open) */}
+        {/* Static Activity Feed */}
         {!showActivity && (
           <div className="mt-8">
             <div className="card p-5">
@@ -679,17 +420,17 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
-      <KeyboardShortcuts
-        open={showShortcuts}
-        onClose={() => setShowShortcuts(false)}
-      />
+      <KeyboardShortcuts open={showShortcuts} onClose={() => setShowShortcuts(false)} />
       <ConfirmModal
         open={confirmDelete}
         title="删除项目"
-        message="确定删除此项目？所有关联的任务、阶段和文档将被删除。此操作不可撤销。"
+        message="确定删除此项目？所有关联的 Issue、任务和文档将被删除。此操作不可撤销。"
         confirmLabel="删除"
         variant="danger"
-        onConfirm={() => { setConfirmDelete(false); handleDelete(); }}
+        onConfirm={() => {
+          setConfirmDelete(false);
+          handleDelete();
+        }}
         onCancel={() => setConfirmDelete(false)}
       />
     </>

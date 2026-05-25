@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db/client';
-import { repositories, pullRequests, linkedCommits, projectRepos, stages, githubIssues, tasks } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { repositories, pullRequests, linkedCommits, projectRepos, issues, stages, githubIssues, tasks } from '@/lib/db/schema';
+import { eq, and, inArray } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 import { createNotification } from '@/lib/notify';
-import { approveStage } from '@/lib/workflow';
+import { approveIssueStage } from '@/lib/workflow';
 
 // Verify webhook signature (simplified — full HMAC check in production)
 function verifySignature(_req: NextRequest, _secret: string): boolean {
@@ -96,9 +96,12 @@ export async function POST(
         });
 
         for (const link of linkedProjects) {
-          const reviewStage = await db.query.stages.findFirst({
-            where: and(eq(stages.projectId, link.projectId), eq(stages.step, 8)),
-          });
+          // Find code review stage by name across all project issues
+          const projIssues = await db.query.issues.findMany({ where: eq(issues.projectId, link.projectId), columns: { id: true } });
+          const projIssueIds = projIssues.map(i => i.id);
+          const reviewStage = projIssueIds.length > 0 ? await db.query.stages.findFirst({
+            where: and(inArray(stages.issueId, projIssueIds), eq(stages.name, '代码评审')),
+          }) : null;
 
           if (!reviewStage) continue;
 
@@ -122,7 +125,7 @@ export async function POST(
           } else if (action === 'closed' && isMerged) {
             // Auto-approve code review stage when PR is merged
             if (reviewStage.status === 'in_progress') {
-              await approveStage(link.projectId, 8);
+              await approveIssueStage(reviewStage.issueId, reviewStage.step);
             }
           }
         }
@@ -188,13 +191,12 @@ export async function POST(
           });
 
           for (const link of linkedProjects) {
-            // Find the first in-progress or todo stage (usually development, step 7)
-            const devStage = await db.query.stages.findFirst({
-              where: and(
-                eq(stages.projectId, link.projectId),
-                eq(stages.step, 7),
-              ),
-            });
+            // Find development stage by name across all project issues
+            const projIssues = await db.query.issues.findMany({ where: eq(issues.projectId, link.projectId), columns: { id: true } });
+            const projIssueIds = projIssues.map(i => i.id);
+            const devStage = projIssueIds.length > 0 ? await db.query.stages.findFirst({
+              where: and(inArray(stages.issueId, projIssueIds), eq(stages.name, '开发实现')),
+            }) : null;
 
             const taskId = createId();
             await db.insert(tasks).values({

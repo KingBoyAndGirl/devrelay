@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { projects, stages, pullRequests, deployments, feedback, agents } from '@/lib/db/schema';
-import { eq, inArray } from 'drizzle-orm';
+import { projects, issues, deployments, feedback } from '@/lib/db/schema';
+import { eq, desc } from 'drizzle-orm';
 
 export async function GET(
   _req: NextRequest,
@@ -16,7 +16,6 @@ export async function GET(
   const project = await db.query.projects.findFirst({
     where: eq(projects.id, params.id),
     with: {
-      stages: true,
       projectRepos: { with: { repository: true } },
     },
   });
@@ -25,47 +24,21 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  // Sort stages by step
-  project.stages.sort((a, b) => a.step - b.step);
+  // Get issues with their stages
+  const issueList = await db.query.issues.findMany({
+    where: eq(issues.projectId, params.id),
+    with: { stages: true },
+    orderBy: [desc(issues.updatedAt)],
+  });
 
-  // Fetch linked PRs for all stages
-  const stageIds = project.stages.map(s => s.id);
-  const linkedPRs = stageIds.length > 0
-    ? await db.query.pullRequests.findMany({
-        where: inArray(pullRequests.devrelayStageId, stageIds),
-      })
-    : [];
-
-  // Attach PRs to their stages
-  const prsByStage: Record<string, Array<typeof linkedPRs[0]>> = {};
-  for (const pr of linkedPRs) {
-    if (pr.devrelayStageId) {
-      (prsByStage[pr.devrelayStageId] ||= []).push(pr);
-    }
+  // Compute progress across all issues
+  let totalStages = 0;
+  let completedStages = 0;
+  for (const issue of issueList) {
+    const stagesOf = issue.stages || [];
+    totalStages += stagesOf.length;
+    completedStages += stagesOf.filter(s => s.status === 'completed').length;
   }
-
-  // Resolve assigned agent names
-  const assignedAgentIds = Array.from(new Set(project.stages.map(s => s.assignedTo).filter((id): id is string => id !== null)));
-  const assignedAgents = assignedAgentIds.length > 0
-    ? await db.query.agents.findMany({
-        where: inArray(agents.id, assignedAgentIds),
-        columns: { id: true, name: true },
-      })
-    : [];
-  const agentNameById = Object.fromEntries(assignedAgents.map(a => [a.id, a.name]));
-
-  const stagesWithPRs = project.stages.map(s => ({
-    ...s,
-    assignedAgentName: s.assignedTo ? (agentNameById[s.assignedTo] || null) : null,
-    linkedPRs: (prsByStage[s.id] || []).map(p => ({
-      id: p.id,
-      prNumber: p.prNumber,
-      title: p.title,
-      state: p.state || 'open',
-      sourceBranch: p.sourceBranch,
-      targetBranch: p.targetBranch,
-    })),
-  }));
 
   // Fetch latest deployment and recent feedback
   const [latestDeploy, feedbackItems] = await Promise.all([
@@ -82,7 +55,9 @@ export async function GET(
 
   return NextResponse.json({
     ...project,
-    stages: stagesWithPRs,
+    issueCount: issueList.length,
+    issues: issueList,
+    progress: totalStages ? Math.round((completedStages / totalStages) * 100) : 0,
     latestDeployment: latestDeploy || null,
     recentFeedback: feedbackItems,
   });

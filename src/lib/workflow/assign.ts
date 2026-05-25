@@ -1,7 +1,6 @@
 import { db } from '@/lib/db/client';
-import { stages, agents, agentProjects, tasks } from '@/lib/db/schema';
+import { stages, issues, agents, agentProjects, tasks } from '@/lib/db/schema';
 import { eq, and, sql } from 'drizzle-orm';
-import { STAGE_DEFAULT_ROLES } from '@/types';
 
 const MAX_AGENT_TASKS = 5;
 
@@ -15,22 +14,29 @@ export interface AssignResult {
 }
 
 export async function autoAssignStage(
-  projectId: string,
+  issueId: string,
   step: number
 ): Promise<AssignResult> {
   const stage = await db.query.stages.findFirst({
-    where: and(eq(stages.projectId, projectId), eq(stages.step, step)),
+    where: and(eq(stages.issueId, issueId), eq(stages.step, step)),
   });
 
   if (!stage) {
     return { stageId: '', step, requiredRole: '', assignedTo: null, agentName: null, reason: 'Stage not found' };
   }
 
-  const requiredRole = stage.requiredRole || STAGE_DEFAULT_ROLES[step] || 'developer';
+  const issue = await db.query.issues.findFirst({
+    where: eq(issues.id, issueId),
+  });
+  if (!issue) {
+    return { stageId: stage.id, step, requiredRole: '', assignedTo: null, agentName: null, reason: 'Issue not found' };
+  }
+
+  const requiredRole = stage.requiredRole || 'developer';
 
   // Find agents in this project with matching role
   const projectAgents = await db.query.agentProjects.findMany({
-    where: eq(agentProjects.projectId, projectId),
+    where: eq(agentProjects.projectId, issue.projectId),
   });
 
   if (projectAgents.length === 0) {
@@ -40,7 +46,7 @@ export async function autoAssignStage(
       requiredRole,
       assignedTo: null,
       agentName: null,
-      reason: `No agents assigned to project`,
+      reason: 'No agents assigned to project',
     };
   }
 
@@ -66,7 +72,7 @@ export async function autoAssignStage(
     };
   }
 
-  // Check agent workload: count in_progress tasks per agent
+  // Check agent workload
   const best = await findBestAgent(projectMatching);
 
   if (!best) {
@@ -80,7 +86,6 @@ export async function autoAssignStage(
     };
   }
 
-  // Assign
   const now = new Date().toISOString();
   await db
     .update(stages)
@@ -119,9 +124,9 @@ async function findBestAgent(
   return best;
 }
 
-export async function autoAssignAllPending(projectId: string): Promise<AssignResult[]> {
+export async function autoAssignAllPending(issueId: string): Promise<AssignResult[]> {
   const allStages = await db.query.stages.findMany({
-    where: eq(stages.projectId, projectId),
+    where: eq(stages.issueId, issueId),
     orderBy: (stages, { asc }) => [asc(stages.step)],
   });
 
@@ -129,7 +134,7 @@ export async function autoAssignAllPending(projectId: string): Promise<AssignRes
 
   for (const stage of allStages) {
     if (!stage.assignedTo && (stage.status === 'pending' || stage.status === 'in_progress')) {
-      const result = await autoAssignStage(projectId, stage.step);
+      const result = await autoAssignStage(issueId, stage.step);
       results.push(result);
     }
   }
@@ -147,26 +152,33 @@ export async function autoAssignByRole(
 
   if (!agent) return [];
 
-  const projects = await db.query.agentProjects.findMany({
+  const projectLinks = await db.query.agentProjects.findMany({
     where: eq(agentProjects.agentId, agentId),
   });
 
   const results: AssignResult[] = [];
 
-  for (const ap of projects) {
-    const pendingStages = await db.query.stages.findMany({
-      where: and(
-        eq(stages.projectId, ap.projectId),
-        eq(stages.status, 'pending'),
-      ),
-      orderBy: (stages, { asc }) => [asc(stages.step)],
+  for (const ap of projectLinks) {
+    // Find all issues in this project
+    const projectIssues = await db.query.issues.findMany({
+      where: eq(issues.projectId, ap.projectId),
     });
 
-    for (const stage of pendingStages) {
-      const requiredRole = stage.requiredRole || STAGE_DEFAULT_ROLES[stage.step] || 'developer';
-      if (requiredRole === agentRole && !stage.assignedTo) {
-        const result = await autoAssignStage(ap.projectId, stage.step);
-        results.push(result);
+    for (const issue of projectIssues) {
+      const pendingStages = await db.query.stages.findMany({
+        where: and(
+          eq(stages.issueId, issue.id),
+          eq(stages.status, 'pending'),
+        ),
+        orderBy: (stages, { asc }) => [asc(stages.step)],
+      });
+
+      for (const stage of pendingStages) {
+        const requiredRole = stage.requiredRole || 'developer';
+        if (requiredRole === agentRole && !stage.assignedTo) {
+          const result = await autoAssignStage(issue.id, stage.step);
+          results.push(result);
+        }
       }
     }
   }

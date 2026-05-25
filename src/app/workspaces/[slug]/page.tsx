@@ -18,8 +18,13 @@ interface RecentProject {
   id: string;
   name: string;
   status: string;
-  stages: Array<{ step: number; name: string; status: string }>;
+  issues?: Array<{ stages?: Array<{ id: string; step: number; name: string; status: string }> }>;
   updatedAt: string;
+}
+
+function getProjectStages(p: RecentProject) {
+  if (!p.issues) return [];
+  return p.issues.flatMap((i) => i.stages || []);
 }
 
 export default function WorkspacePage() {
@@ -61,7 +66,8 @@ export default function WorkspacePage() {
     load();
   }, [slug]);
 
-  function progress(stages: RecentProject['stages']) {
+  function progress(p: RecentProject) {
+    const stages = getProjectStages(p);
     const done = stages.filter(s => s.status === 'completed').length;
     return stages.length ? Math.round((done / stages.length) * 100) : 0;
   }
@@ -130,9 +136,10 @@ export default function WorkspacePage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {activeProjects.map(p => {
-              const doneCount = p.stages.filter(s => s.status === 'completed').length;
-              const progress = p.stages.length ? Math.round((doneCount / p.stages.length) * 100) : 0;
-              const activeStage = p.stages.find(s => s.status === 'in_progress');
+              const issueStages = (p.issues || []).flatMap((i: any) => i.stages || []);
+              const doneCount = issueStages.filter((s: any) => s.status === 'completed').length;
+              const progress = issueStages.length ? Math.round((doneCount / issueStages.length) * 100) : 0;
+              const activeStage = issueStages.find((s: any) => s.status === 'in_progress');
               return (
                 <Link
                   key={p.id}
@@ -147,10 +154,10 @@ export default function WorkspacePage() {
                   </div>
                   {/* Mini dots */}
                   <div className="flex items-center gap-1 mb-2">
-                    {p.stages.map(s => (
+                    {issueStages.slice(0, 20).map((s: any) => (
                       <span
-                        key={s.step}
-                        title={`${s.step}. ${s.name}: ${s.status}`}
+                        key={s.id || s.step}
+                        title={`${s.step || ''}. ${s.name}: ${s.status}`}
                         className={`w-2 h-2 rounded-full ${
                           s.status === 'completed' ? 'bg-green-500' :
                           s.status === 'in_progress' ? 'bg-blue-500 ring-1 ring-blue-300' :
@@ -159,10 +166,11 @@ export default function WorkspacePage() {
                         }`}
                       />
                     ))}
+                    {issueStages.length > 20 && <span className="text-[10px] text-gray-400">+{issueStages.length - 20}</span>}
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">
-                      {activeStage ? `${activeStage.step}. ${activeStage.name}` : '暂无进行中阶段'}
+                      {activeStage ? `${activeStage.step}. ${activeStage.name}` : issueStages.length > 0 ? '暂无进行中阶段' : '暂无 Issue'}
                     </span>
                     <span className="text-xs font-medium text-gray-700">{progress}%</span>
                   </div>
@@ -217,10 +225,10 @@ export default function WorkspacePage() {
                     <div className="flex-1 bg-gray-100 rounded-full h-2">
                       <div
                         className="bg-blue-600 h-2 rounded-full transition-all"
-                        style={{ width: `${progress(p.stages)}%` }}
+                        style={{ width: `${progress(p)}%` }}
                       />
                     </div>
-                    <span className="text-xs text-gray-500 font-mono">{progress(p.stages)}%</span>
+                    <span className="text-xs text-gray-500 font-mono">{progress(p)}%</span>
                   </div>
                 </Link>
               ))}

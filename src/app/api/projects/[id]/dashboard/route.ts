@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { stages, tasks, deployments, feedback, activities, agentProjects, agents, projectRepos, pullRequests } from '@/lib/db/schema';
+import { issues, stages, tasks, deployments, feedback, activities, agentProjects, agents, projectRepos, pullRequests } from '@/lib/db/schema';
 import { eq, desc, inArray, sql } from 'drizzle-orm';
 
 export async function GET(
@@ -14,10 +14,16 @@ export async function GET(
   }
 
   const [stageList, taskList, deploymentList, feedbackList, activityList, agentLinkList] = await Promise.all([
-    db.query.stages.findMany({
-      where: eq(stages.projectId, params.id),
-      orderBy: (stages, { asc }) => [asc(stages.step)],
-    }),
+    (async () => {
+      const projectIssues = await db.query.issues.findMany({ where: eq(issues.projectId, params.id), columns: { id: true } });
+      const issueIds = projectIssues.map(i => i.id);
+      return issueIds.length > 0
+        ? db.query.stages.findMany({
+            where: inArray(stages.issueId, issueIds),
+            orderBy: (stages, { asc }) => [asc(stages.step)],
+          })
+        : [];
+    })(),
     db.query.tasks.findMany({
       where: eq(tasks.projectId, params.id),
     }),

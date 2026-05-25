@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { feedback, projects, stages } from '@/lib/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { feedback, projects, issues, stages } from '@/lib/db/schema';
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 import { createNotification } from '@/lib/notify';
 
@@ -55,10 +55,12 @@ export async function POST(
     return NextResponse.json({ error: 'Title is required' }, { status: 400 });
   }
 
-  // Find monitoring stage (step 13) if feedback related
-  const monitorStage = await db.query.stages.findFirst({
-    where: and(eq(stages.projectId, params.id), eq(stages.step, 13)),
-  });
+  // Find monitoring stage by name across all project issues
+  const projectIssues = await db.query.issues.findMany({ where: eq(issues.projectId, params.id), columns: { id: true } });
+  const issueIds = projectIssues.map(i => i.id);
+  const monitorStage = issueIds.length > 0 ? await db.query.stages.findFirst({
+    where: and(inArray(stages.issueId, issueIds), eq(stages.name, '反馈收集')),
+  }) : null;
 
   const now = new Date().toISOString();
   const item = {

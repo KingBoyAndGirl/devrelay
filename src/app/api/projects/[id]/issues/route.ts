@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { projects, projectRepos, repositories, githubIssues, tasks } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { projects, issues, stages, agents, agentProjects } from '@/lib/db/schema';
+import { eq, desc, and } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
-import { createOctokit, listIssues } from '@/lib/github';
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const session = await auth();
@@ -15,31 +14,47 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Find all repos linked to this project
-  const linkedRepos = await db.query.projectRepos.findMany({
-    where: eq(projectRepos.projectId, params.id),
+  const project = await db.query.projects.findFirst({
+    where: eq(projects.id, params.id),
   });
-
-  const repoIds = linkedRepos.map(r => r.repositoryId);
-
-  if (repoIds.length === 0) {
-    return NextResponse.json([]);
+  if (!project) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  // Fetch issues for all linked repos
-  const allIssues: any[] = [];
-  for (const rid of repoIds) {
-    const issues = await db.query.githubIssues.findMany({
-      where: eq(githubIssues.repositoryId, rid),
-      orderBy: (githubIssues, { desc }) => [desc(githubIssues.updatedAt)],
+  const { searchParams } = new URL(req.url);
+  const statusFilter = searchParams.get('status');
+
+  let list;
+  if (statusFilter) {
+    list = await db.query.issues.findMany({
+      where: and(eq(issues.projectId, params.id), eq(issues.status, statusFilter)),
+      orderBy: [desc(issues.updatedAt)],
+      with: { stages: true },
     });
-    allIssues.push(...issues);
+  } else {
+    list = await db.query.issues.findMany({
+      where: eq(issues.projectId, params.id),
+      orderBy: [desc(issues.updatedAt)],
+      with: { stages: true },
+    });
   }
 
-  // Sort by updatedAt desc
-  allIssues.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  // Resolve agent names
+  const agentIdSet = new Set<string>();
+  for (const i of list) { if (i.assignedAgentId) agentIdSet.add(i.assignedAgentId); }
+  const agentIds = Array.from(agentIdSet);
+  const agentList = agentIds.length > 0
+    ? await db.query.agents.findMany({ where: (agents, { inArray }) => inArray(agents.id, agentIds as string[]) })
+    : [];
+  const agentMap = new Map(agentList.map(a => [a.id, a]));
 
-  return NextResponse.json(allIssues);
+  const enriched = list.map(issue => ({
+    ...issue,
+    stages: [...(issue.stages ?? [])].sort((a: { step: number }, b: { step: number }) => a.step - b.step),
+    assignedAgentName: issue.assignedAgentId ? agentMap.get(issue.assignedAgentId)?.name || null : null,
+  }));
+
+  return NextResponse.json(enriched);
 }
 
 export async function POST(
@@ -53,88 +68,57 @@ export async function POST(
 
   const project = await db.query.projects.findFirst({
     where: eq(projects.id, params.id),
-    with: {
-      projectRepos: { with: { repository: true } },
-    },
   });
-
   if (!project) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const repos = project.projectRepos.map(pr => pr.repository).filter(r => r.accessToken);
-  if (repos.length === 0) {
-    return NextResponse.json({ error: 'No connected repositories with access tokens' }, { status: 400 });
+  const { title, description, type, priority, stageNames, assignedAgentId } = await req.json();
+
+  if (!title || typeof title !== 'string' || !title.trim()) {
+    return NextResponse.json({ error: 'Title is required' }, { status: 400 });
   }
 
-  const results: Array<{ issueNumber: number; title: string; taskId?: string }> = [];
+  if (!Array.isArray(stageNames) || stageNames.length === 0) {
+    return NextResponse.json({ error: 'At least one stage is required' }, { status: 400 });
+  }
+
   const now = new Date().toISOString();
+  const issueId = createId();
 
-  for (const repo of repos) {
-    const octokit = createOctokit(repo.accessToken!);
-    const [owner, repoName] = repo.name.split('/');
+  await db.insert(issues).values({
+    id: issueId,
+    projectId: params.id,
+    type: type || 'feature',
+    title: title.trim(),
+    description: description || null,
+    priority: priority || 'medium',
+    status: 'backlog',
+    assignedAgentId: assignedAgentId || null,
+    reportedBy: (session.user as any).id || 'unknown',
+    createdAt: now,
+    updatedAt: now,
+  });
 
-    if (!owner || !repoName) continue;
+  // Create stages for this issue
+  const stageValues = stageNames.map((name, idx) => ({
+    id: createId(),
+    issueId,
+    step: idx + 1,
+    name,
+    status: idx === 0 ? ('in_progress' as const) : ('pending' as const),
+    startedAt: idx === 0 ? now : null,
+  }));
 
-    try {
-      const issues = await listIssues(octokit, owner, repoName, { state: 'open' });
+  await db.insert(stages).values(stageValues);
 
-      for (const issue of issues) {
-        // Skip pull requests (GitHub API returns PRs as issues too)
-        if ((issue as any).pull_request) continue;
-
-        // Check if already synced
-        const existing = await db.query.githubIssues.findFirst({
-          where: eq(githubIssues.id, `${repo.id}-${issue.number}`),
-        });
-
-        if (existing) {
-          results.push({ issueNumber: issue.number, title: issue.title, taskId: existing.devrelayTaskId || undefined });
-          continue;
-        }
-
-        // Store the GitHub issue
-        const issueId = createId();
-        await db.insert(githubIssues).values({
-          id: issueId,
-          repositoryId: repo.id,
-          issueNumber: issue.number,
-          title: issue.title,
-          body: issue.body || null,
-          state: issue.state || 'open',
-          labels: JSON.stringify(issue.labels),
-          assignees: JSON.stringify(issue.assignees),
-          syncedAt: now,
-          createdAt: issue.created_at || now,
-          updatedAt: issue.updated_at || now,
-        });
-
-        // Create a linked DevRelay task
-        const taskId = createId();
-        await db.insert(tasks).values({
-          id: taskId,
-          projectId: params.id,
-          title: `[GitHub #${issue.number}] ${issue.title}`,
-          description: issue.body || null,
-          status: 'todo',
-          priority: 'medium',
-          repositoryId: repo.id,
-          githubIssueId: issueId,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        // Link issue back to task
-        await db.update(githubIssues)
-          .set({ devrelayTaskId: taskId })
-          .where(eq(githubIssues.id, issueId));
-
-        results.push({ issueNumber: issue.number, title: issue.title, taskId });
-      }
-    } catch (err) {
-      results.push({ issueNumber: 0, title: `Error syncing ${repo.name}: ${(err as Error).message}` });
-    }
+  // Auto-assign first stage if agent is assigned
+  if (assignedAgentId) {
+    const firstStage = stageValues[0];
+    await db.update(stages)
+      .set({ assignedTo: assignedAgentId })
+      .where(eq(stages.id, firstStage.id));
   }
 
-  return NextResponse.json({ synced: results.length, results });
+  return NextResponse.json({ id: issueId, title: title.trim(), stageCount: stageNames.length }, { status: 201 });
 }

@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { workspaces, projects, stages, tasks } from '@/lib/db/schema';
+import { workspaces, projects, tasks } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
-import { STAGE_NAMES, STAGE_DEFAULT_ROLES } from '@/types';
 import { getTemplate } from '@/lib/templates';
 
 export async function GET(
@@ -27,7 +26,7 @@ export async function GET(
   const list = await db.query.projects.findMany({
     where: eq(projects.workspaceId, ws.id),
     orderBy: [desc(projects.updatedAt)],
-    with: { stages: true },
+    with: { issues: { with: { stages: true } } },
   });
 
   return NextResponse.json(list);
@@ -70,29 +69,14 @@ export async function POST(
     updatedAt: now,
   });
 
-  // Auto-create all 13 stages with default required roles
-  const stageValues = Object.entries(STAGE_NAMES).map(([step, stageName]) => ({
-    id: createId(),
-    projectId,
-    step: parseInt(step),
-    name: stageName,
-    requiredRole: STAGE_DEFAULT_ROLES[parseInt(step)] || null,
-    status: (parseInt(step) === 1 ? 'in_progress' : 'pending') as 'pending' | 'in_progress',
-    startedAt: parseInt(step) === 1 ? now : null,
-  }));
-
-  await db.insert(stages).values(stageValues);
+  // Stages are now created at the Issue level, not Project level.
+  // No default stages are created here.
 
   // Bulk-insert template tasks if a template was selected
+  // Note: stageId is left null since stages are now at the Issue level
   if (template && template !== 'empty') {
     const tmpl = getTemplate(template);
     if (tmpl) {
-      // Build a map: stageStep → stageId
-      const stageByStep: Record<number, string> = {};
-      for (const sv of stageValues) {
-        stageByStep[sv.step] = sv.id;
-      }
-
       const taskValues = tmpl.tasks.map((t) => ({
         id: createId(),
         projectId,
@@ -100,7 +84,7 @@ export async function POST(
         description: t.description || null,
         status: 'todo',
         priority: t.priority,
-        stageId: stageByStep[t.stageStep] || null,
+        stageId: null,
         createdAt: now,
         updatedAt: now,
       }));

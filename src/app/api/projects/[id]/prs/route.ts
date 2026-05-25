@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { projects, projectRepos, repositories, pullRequests, stages } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { projects, projectRepos, repositories, issues, pullRequests, stages } from '@/lib/db/schema';
+import { eq, and, inArray } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 import { createOctokit } from '@/lib/github';
 
@@ -87,10 +87,12 @@ export async function POST(
 
     const now = new Date().toISOString();
 
-    // Find code review stage (step 8) to link the PR
-    const reviewStage = await db.query.stages.findFirst({
-      where: and(eq(stages.projectId, params.id), eq(stages.step, 8)),
-    });
+    // Find code review stage by name across all project issues
+    const projectIssues = await db.query.issues.findMany({ where: eq(issues.projectId, params.id), columns: { id: true } });
+    const issueIds = projectIssues.map(i => i.id);
+    const reviewStage = issueIds.length > 0 ? await db.query.stages.findFirst({
+      where: and(inArray(stages.issueId, issueIds), eq(stages.name, '代码评审')),
+    }) : null;
 
     const prId = createId();
 

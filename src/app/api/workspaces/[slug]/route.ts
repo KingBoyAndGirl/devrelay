@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
 import {
   workspaces, workspaceMembers, projects, agents, repositories,
-  invitations, githubOAuthTokens, agentProjects, stages, tasks,
+  invitations, githubOAuthTokens, agentProjects, issues, stages, tasks,
   documents, comments, activities, deployments, feedback, projectRepos,
   projectMembers, githubIssues, pullRequests, linkedCommits, notifications,
 } from '@/lib/db/schema';
@@ -123,7 +123,11 @@ export async function DELETE(
 
   // Delete project children
   for (const pid of projectIds) {
-    await db.delete(stages).where(eq(stages.projectId, pid));
+    const projectIssues = await db.query.issues.findMany({ where: eq(issues.projectId, pid), columns: { id: true } });
+    for (const iss of projectIssues) {
+      await db.delete(stages).where(eq(stages.issueId, iss.id));
+    }
+    await db.delete(issues).where(eq(issues.projectId, pid));
     await db.delete(tasks).where(eq(tasks.projectId, pid));
     await db.delete(documents).where(eq(documents.projectId, pid));
     await db.delete(comments).where(eq(comments.projectId, pid));

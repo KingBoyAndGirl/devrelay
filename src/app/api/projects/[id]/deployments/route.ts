@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { deployments, projects, stages, activities } from '@/lib/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { deployments, projects, issues, stages, activities } from '@/lib/db/schema';
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 import { createNotification } from '@/lib/notify';
-import { approveStage } from '@/lib/workflow';
+import { approveIssueStage } from '@/lib/workflow';
 
 export async function GET(
   _req: NextRequest,
@@ -35,10 +35,12 @@ export async function POST(
 
   const { version, environment } = await req.json();
 
-  // Find deployment stage (step 11)
-  const deployStage = await db.query.stages.findFirst({
-    where: and(eq(stages.projectId, params.id), eq(stages.step, 11)),
-  });
+  // Find deployment stage by name across all project issues
+  const projectIssues = await db.query.issues.findMany({ where: eq(issues.projectId, params.id), columns: { id: true } });
+  const issueIds = projectIssues.map(i => i.id);
+  const deployStage = issueIds.length > 0 ? await db.query.stages.findFirst({
+    where: and(inArray(stages.issueId, issueIds), eq(stages.name, '部署发布')),
+  }) : null;
 
   if (!deployStage) {
     return NextResponse.json({ error: 'Deployment stage not found' }, { status: 400 });
@@ -129,13 +131,13 @@ export async function PUT(
     });
   }
 
-  // Auto-approve stage 11 on successful deploy
+  // Auto-approve deployment stage on successful deploy
   if (status === 'success' && dep.stageId) {
     const stage = await db.query.stages.findFirst({
       where: eq(stages.id, dep.stageId),
     });
     if (stage && stage.status === 'in_progress') {
-      await approveStage(params.id, 11);
+      await approveIssueStage(stage.issueId, stage.step);
     }
   }
 

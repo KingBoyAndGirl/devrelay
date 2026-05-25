@@ -9,13 +9,6 @@ import ConfirmModal from '@/components/ui/ConfirmModal';
 import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 import { OnboardingTooltip } from '@/components/ui/OnboardingTooltip';
 
-interface StageInfo {
-  id: string;
-  step: number;
-  name: string;
-  status: string;
-}
-
 interface Task {
   id: string;
   title: string;
@@ -24,7 +17,7 @@ interface Task {
   priority: string;
   assignedTo: string | null;
   stageId: string | null;
-  stageInfo: StageInfo | null;
+  stageInfo: { id: string; step: number; name: string; status: string } | null;
   agentId: string | null;
   gitBranch: string | null;
   githubIssueId: string | null;
@@ -59,51 +52,17 @@ export default function TasksPage() {
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showNew, setShowNew] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [newPriority, setNewPriority] = useState('medium');
-  const [newStageId, setNewStageId] = useState('');
-  const [stages, setStages] = useState<StageInfo[]>([]);
   const [confirmDeleteTask, setConfirmDeleteTask] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [mobileColumn, setMobileColumn] = useState('todo');
 
-  useEffect(() => { fetchTasks(); fetchStages(); }, [projectId]);
+  useEffect(() => { fetchTasks(); }, [projectId]);
 
   async function fetchTasks() {
     const res = await fetch(`/api/projects/${projectId}/tasks`);
     setTasks(await res.json());
     setLoading(false);
-  }
-
-  async function fetchStages() {
-    const res = await fetch(`/api/projects/${projectId}`);
-    const data = await res.json();
-    const stageList = data.stages || [];
-    setStages(stageList);
-    const firstActive = stageList.find((s: StageInfo) => s.status === 'in_progress' || s.status === 'pending');
-    if (firstActive) setNewStageId(firstActive.id);
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    const res = await fetch(`/api/projects/${projectId}/tasks`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: newTitle, description: newDesc, priority: newPriority, stageId: newStageId || null }),
-    });
-    if (res.ok) {
-      setShowNew(false);
-      setNewTitle('');
-      setNewDesc('');
-      setNewStageId('');
-      fetchTasks();
-    }
-    setSaving(false);
   }
 
   async function updateTaskStatus(taskId: string, newStatus: string) {
@@ -173,76 +132,10 @@ export default function TasksPage() {
     <>
       <div className="px-6 py-4 flex items-center justify-between">
         <h1 className="text-lg font-bold">任务看板</h1>
-        <button
-          onClick={() => setShowNew(!showNew)}
-          className="btn-primary"
-        >
-          {showNew ? '取消' : '新建任务'}
-        </button>
+        <p className="text-xs text-gray-400">观察 Agent 生成的任务进度</p>
       </div>
 
       <main className="p-6">
-        {showNew && (
-          <form onSubmit={handleCreate} className="max-w-2xl mx-auto mb-6 card p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">任务标题</label>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                className="input"
-                placeholder="任务描述"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">详细说明（可选）</label>
-              <textarea
-                value={newDesc}
-                onChange={(e) => setNewDesc(e.target.value)}
-                className="input"
-                rows={3}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">优先级</label>
-              <select
-                value={newPriority}
-                onChange={(e) => setNewPriority(e.target.value)}
-                className="select"
-              >
-                {Object.entries(PRIORITY_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
-            </div>
-            {stages.length > 0 && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">所属阶段</label>
-                <select
-                  value={newStageId}
-                  onChange={(e) => setNewStageId(e.target.value)}
-                  className="select"
-                >
-                  <option value="">不关联阶段</option>
-                  {stages.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {String(s.step).padStart(2, '0')} - {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={saving}
-              className="btn-primary"
-            >
-              {saving ? '创建中...' : '创建任务'}
-            </button>
-          </form>
-        )}
-
         {loading ? (
           <ListSkeleton count={5} />
         ) : (

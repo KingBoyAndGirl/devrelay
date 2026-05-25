@@ -25,7 +25,57 @@ export type NotificationType = 'stage_assigned' | 'stage_rejected' | 'stage_appr
 // Document type
 export type DocumentType = 'prd' | 'prototype' | 'tech_design' | 'code_review_report' | 'test_plan' | 'test_report' | 'acceptance_report' | 'deployment_log';
 
-// 13 steps with default required roles
+// Stage pool — all available stages grouped by category
+export const STAGE_POOL: Record<string, string[]> = {
+  需求: ['需求澄清', '需求收集', 'PRD编写', '技术评审'],
+  设计: ['原型设计', '技术方案', '方案评审'],
+  开发: ['任务拆分', '开发实现', '代码评审'],
+  质量: ['单元测试', '集成测试', 'QA验收', '性能测试', '安全审计'],
+  交付: ['文档编写', '部署发布', '交付验收', '客户验收'],
+  运维: ['线上监控', '反馈收集'],
+};
+
+// Issue stage templates
+export interface IssueTemplate {
+  name: string;
+  description: string;
+  stages: string[];
+}
+
+export const ISSUE_TEMPLATES: Record<string, IssueTemplate> = {
+  'full-delivery': {
+    name: '完整交付',
+    description: '端到端软件交付全流程',
+    stages: [
+      '需求澄清', 'PRD编写', '原型设计', '技术方案', '方案评审',
+      '任务拆分', '开发实现', '代码评审', '单元测试', '集成测试',
+      'QA验收', '性能测试', '安全审计', '文档编写', '部署发布',
+      '交付验收', '客户验收', '线上监控', '反馈收集',
+    ],
+  },
+  'feature-dev': {
+    name: '功能开发',
+    description: '标准功能开发流程',
+    stages: ['需求澄清', '技术方案', '开发实现', '代码评审', 'QA验收', '部署发布', '交付验收'],
+  },
+  'bug-fix': {
+    name: 'Bug 修复',
+    description: 'Bug 修复精简流程',
+    stages: ['复现确认', '开发实现', '代码评审', 'QA验收', '部署发布'],
+  },
+  hotfix: {
+    name: '紧急修复',
+    description: '线上紧急修复快速通道',
+    stages: ['开发实现', '代码评审', '部署发布'],
+  },
+  custom: {
+    name: '自定义',
+    description: '从阶段池中自由选择',
+    stages: [],
+  },
+};
+
+// Keep legacy references for backward compatibility
 export const STAGE_NAMES: Record<number, string> = {
   1: '需求收集',
   2: 'PRD编写',

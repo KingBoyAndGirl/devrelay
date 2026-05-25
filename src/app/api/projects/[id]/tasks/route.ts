@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { tasks, stages } from '@/lib/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { tasks, stages, issues } from '@/lib/db/schema';
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 
 export async function GET(
@@ -22,10 +22,17 @@ export async function GET(
     orderBy: [desc(tasks.updatedAt)],
   });
 
-  // Fetch stages for stage info enrichment
-  const projectStages = await db.query.stages.findMany({
-    where: eq(stages.projectId, params.id),
+  // Fetch stages for stage info enrichment (through issues)
+  const projectIssues = await db.query.issues.findMany({
+    where: eq(issues.projectId, params.id),
+    columns: { id: true },
   });
+  const issueIds = projectIssues.map(i => i.id);
+  const projectStages = issueIds.length > 0
+    ? await db.query.stages.findMany({
+        where: inArray(stages.issueId, issueIds),
+      })
+    : [];
   const stageMap = new Map(projectStages.map(s => [s.id, { id: s.id, step: s.step, name: s.name, status: s.status }]));
 
   const enriched = list.map(t => ({

@@ -71,8 +71,9 @@ export default function OnboardingPage() {
       setWorkspace(data);
       setStep(2);
     } else {
-      const data = await res.json();
-      setError(data.error || '创建失败');
+      let errMsg = '创建失败';
+      try { const data = await res.json(); errMsg = data.error || errMsg; } catch {}
+      setError(errMsg);
     }
     setWsCreating(false);
   }

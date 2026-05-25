@@ -83,10 +83,25 @@ export const projectRepos = sqliteTable('project_repos', {
   uniq: uniqueIndex('pr_uniq').on(table.projectId, table.repositoryId),
 }));
 
+// ===== Issue (DevRelay own issues, not GitHub sync) =====
+export const issues = sqliteTable('issues', {
+  id:              text('id').primaryKey(),
+  projectId:       text('project_id').notNull().references(() => projects.id),
+  type:            text('type').notNull().default('feature'), // feature / bug / improvement
+  title:           text('title').notNull(),
+  description:     text('description'),
+  status:          text('status').notNull().default('backlog'), // backlog / in_progress / in_review / done
+  priority:        text('priority').default('medium'), // low / medium / high / critical
+  assignedAgentId: text('assigned_agent_id'),
+  reportedBy:      text('reported_by'),
+  createdAt:       text('created_at').notNull(),
+  updatedAt:       text('updated_at').notNull(),
+});
+
 // ===== Stage =====
 export const stages = sqliteTable('stages', {
   id:           text('id').primaryKey(),
-  projectId:    text('project_id').notNull().references(() => projects.id),
+  issueId:      text('issue_id').notNull().references(() => issues.id),
   step:         integer('step').notNull(),
   name:         text('name').notNull(),
   status:       text('status').notNull().default('pending'),
@@ -96,7 +111,7 @@ export const stages = sqliteTable('stages', {
   startedAt:    text('started_at'),
   completedAt:  text('completed_at'),
 }, (table) => ({
-  uniq: uniqueIndex('st_uniq').on(table.projectId, table.step),
+  uniq: uniqueIndex('st_uniq').on(table.issueId, table.step),
 }));
 
 // ===== Document =====
