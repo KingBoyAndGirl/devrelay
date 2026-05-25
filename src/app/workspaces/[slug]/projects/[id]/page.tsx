@@ -2,95 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
+import { io, Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
-import { ROLE_LABELS } from '@/types';
 import ActivityFeed from '@/components/activities/ActivityFeed';
-
-interface LinkedPR {
-  id: string;
-  prNumber: number;
-  title: string;
-  state: string;
-  sourceBranch: string | null;
-  targetBranch: string | null;
-}
-
-interface Stage {
-  id: string;
-  step: number;
-  name: string;
-  status: string;
-  requiredRole: string | null;
-  assignedTo: string | null;
-  assignedAgentName: string | null;
-  reviewNotes: string | null;
-  startedAt: string | null;
-  completedAt: string | null;
-  linkedPRs: LinkedPR[];
-}
-
-interface Comment {
-  id: string;
-  userId: string;
-  userName: string | null;
-  content: string;
-  stageId: string | null;
-  createdAt: string;
-}
-
-interface Deployment {
-  id: string;
-  version: string | null;
-  environment: string;
-  status: string;
-  deployedAt: string | null;
-  createdAt: string;
-}
-
-interface FeedbackItem {
-  id: string;
-  type: string;
-  title: string;
-  severity: string;
-  status: string;
-  createdAt: string;
-}
-
-interface Project {
-  id: string;
-  name: string;
-  description: string | null;
-  customer: string | null;
-  status: string;
-  stages: Stage[];
-  latestDeployment: Deployment | null;
-  recentFeedback: FeedbackItem[];
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-gray-100 border-gray-300',
-  in_progress: 'bg-blue-50 border-blue-400',
-  completed: 'bg-green-50 border-green-400',
-  rejected: 'bg-red-50 border-red-400',
-};
-
-const STATUS_DOT: Record<string, string> = {
-  pending: 'bg-gray-400',
-  in_progress: 'bg-blue-500 animate-pulse',
-  completed: 'bg-green-500',
-  rejected: 'bg-red-500',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  pending: '待开始',
-  in_progress: '进行中',
-  completed: '已完成',
-  rejected: '已驳回',
-};
+import { KeyboardShortcuts } from '@/components/ui/KeyboardShortcuts';
+import { StageCard } from './StageCard';
+import { StageTimeline } from './StageTimeline';
+import { AgentAssignmentPanel } from './AgentAssignmentPanel';
+import { OnboardingTooltip } from '@/components/ui/OnboardingTooltip';
+import type { Project, Comment, WorkspaceAgent } from './types';
 
 export default function ProjectDetailPage() {
   const routeParams = useParams();
@@ -110,6 +32,7 @@ export default function ProjectDetailPage() {
   const [submittingComment, setSubmittingComment] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showCompletedStages, setShowCompletedStages] = useState(false);
+  const [focusMode, setFocusMode] = useState(true);
   const [editingRole, setEditingRole] = useState<number | null>(null);
   const [deployVersion, setDeployVersion] = useState('');
   const [deploying, setDeploying] = useState(false);
@@ -118,17 +41,130 @@ export default function ProjectDetailPage() {
   const [feedbackSeverity, setFeedbackSeverity] = useState('medium');
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
   const [showAgentAssign, setShowAgentAssign] = useState(false);
-  const [workspaceAgents, setWorkspaceAgents] = useState<Array<{ id: string; name: string; role: string; type: string; assigned: boolean }>>([]);
+  const [workspaceAgents, setWorkspaceAgents] = useState<WorkspaceAgent[]>([]);
   const [savingAgents, setSavingAgents] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const [pinnedActivity, setPinnedActivity] = useState(false);
 
   useEffect(() => {
     fetchProject();
   }, [id]);
 
+  // Socket.io real-time collaboration
+  useEffect(() => {
+    const socket: Socket = io({ transports: ['websocket', 'polling'] });
+
+    socket.emit('subscribe:project', id);
+
+    socket.on('stage_update', (data: {
+      projectId: string; step: number; stageName: string;
+      status: string; reviewNotes: string; action: string;
+      userId: string; userName: string;
+    }) => {
+      setProject(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          stages: prev.stages.map(s =>
+            s.step === data.step
+              ? {
+                  ...s,
+                  status: data.status,
+                  ...(data.reviewNotes ? { reviewNotes: data.reviewNotes } : {}),
+                  ...(data.status === 'completed' ? { completedAt: new Date().toISOString() } : {}),
+                }
+              : s
+          ),
+        };
+      });
+    });
+
+    socket.on('comment', (comment: Comment) => {
+      const sid = comment.stageId;
+      if (sid) {
+        setComments(prev => ({
+          ...prev,
+          [sid]: [comment, ...(prev[sid] || [])],
+        }));
+      }
+    });
+
+    return () => {
+      socket.emit('unsubscribe:project', id);
+      socket.disconnect();
+    };
+  }, [id]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === '?') {
+        e.preventDefault();
+        setShowShortcuts(prev => !prev);
+        return;
+      }
+
+      if (!project) return;
+
+      const inProgress = project.stages.filter(s => s.status === 'in_progress');
+
+      if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
+        if (inProgress.length === 1) handleApprove(inProgress[0].step);
+      }
+
+      if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        if (inProgress.length === 1) {
+          const step = inProgress[0].step;
+          setShowReject(prev => prev === step ? null : step);
+        }
+      }
+
+      if (e.key === 'j' || e.key === 'J') {
+        e.preventDefault();
+        const idx = project.stages.findIndex(s => s.status === 'in_progress');
+        if (idx >= 0 && idx < project.stages.length - 1) {
+          document.getElementById(`stage-${project.stages[idx + 1].step}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+      if (e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        const idx = project.stages.findIndex(s => s.status === 'in_progress');
+        if (idx > 0) {
+          document.getElementById(`stage-${project.stages[idx - 1].step}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        if (inProgress.length === 1) {
+          const stageId = inProgress[0].id;
+          setExpandedComments(prev => {
+            const next = new Set(prev);
+            next.add(stageId);
+            return next;
+          });
+          setTimeout(() => {
+            const el = document.querySelector(`[data-comment-input="${stageId}"]`) as HTMLInputElement;
+            el?.focus();
+          }, 100);
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [project]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-      if (!target.closest('[data-role-dropdown]')) {
+      if (!(e.target as HTMLElement).closest('[data-role-dropdown]')) {
         setEditingRole(null);
       }
     }
@@ -144,38 +180,72 @@ export default function ProjectDetailPage() {
   }
 
   async function handleApprove(step: number) {
+    const prevStages = [...project!.stages];
+    setProject(prev => ({
+      ...prev!,
+      stages: prev!.stages.map(s =>
+        s.step === step ? { ...s, status: 'completed', completedAt: new Date().toISOString() } : s
+      ),
+    }));
     setActing(step);
-    await fetch(`/api/projects/${id}/stages/${step}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'approve' }),
-    });
-    setActing(null);
-    fetchProject();
+    try {
+      await fetch(`/api/projects/${id}/stages/${step}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve' }),
+      });
+      toast.success(`阶段 ${step} 已通过`);
+    } catch {
+      setProject(prev => ({ ...prev!, stages: prevStages }));
+      toast.error('操作失败，请重试');
+    } finally {
+      setActing(null);
+      fetchProject();
+    }
   }
 
   async function handleAutoAssign(step: number) {
     setAssigning(step);
-    await fetch(`/api/projects/${id}/stages/auto-assign`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ step }),
-    });
-    setAssigning(null);
-    fetchProject();
+    try {
+      await fetch(`/api/projects/${id}/stages/auto-assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ step }),
+      });
+      toast.success(`阶段 ${step} 已自动分配`);
+    } catch {
+      toast.error('分配失败');
+    } finally {
+      setAssigning(null);
+      fetchProject();
+    }
   }
 
   async function handleReject(step: number) {
-    setActing(step);
-    await fetch(`/api/projects/${id}/stages/${step}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'reject', reviewNotes: rejectNotes }),
-    });
-    setActing(null);
+    const prevStages = [...project!.stages];
+    setProject(prev => ({
+      ...prev!,
+      stages: prev!.stages.map(s =>
+        s.step === step ? { ...s, status: 'rejected', reviewNotes: rejectNotes } : s
+      ),
+    }));
     setShowReject(null);
-    setRejectNotes('');
-    fetchProject();
+    setActing(step);
+    try {
+      await fetch(`/api/projects/${id}/stages/${step}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject', reviewNotes: rejectNotes }),
+      });
+      toast.success(`阶段 ${step} 已驳回`);
+    } catch {
+      setProject(prev => ({ ...prev!, stages: prevStages }));
+      toast.error('操作失败，请重试');
+    } finally {
+      setActing(null);
+      setRejectNotes('');
+      fetchProject();
+    }
   }
 
   async function toggleComments(stageId: string) {
@@ -197,55 +267,88 @@ export default function ProjectDetailPage() {
     const text = commentText[stageId];
     if (!text?.trim()) return;
     setSubmittingComment(prev => ({ ...prev, [stageId]: true }));
-    await fetch(`/api/projects/${id}/comments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: text, stageId }),
-    });
-    setSubmittingComment(prev => ({ ...prev, [stageId]: false }));
+
+    const tempId = `temp-${Date.now()}`;
+    const optimisticComment: Comment = {
+      id: tempId, userId: '', userName: null,
+      content: text, stageId, createdAt: new Date().toISOString(),
+    };
+    setComments(prev => ({
+      ...prev,
+      [stageId]: [optimisticComment, ...(prev[stageId] || [])],
+    }));
     setCommentText(prev => ({ ...prev, [stageId]: '' }));
-    const res = await fetch(`/api/projects/${id}/comments?stageId=${stageId}`);
-    const data = await res.json();
-    setComments(prev => ({ ...prev, [stageId]: data }));
+
+    try {
+      await fetch(`/api/projects/${id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text, stageId }),
+      });
+      const res = await fetch(`/api/projects/${id}/comments?stageId=${stageId}`);
+      const data = await res.json();
+      setComments(prev => ({ ...prev, [stageId]: data }));
+    } catch {
+      setComments(prev => ({
+        ...prev,
+        [stageId]: (prev[stageId] || []).filter(c => c.id !== tempId),
+      }));
+      toast.error('评论发送失败');
+    } finally {
+      setSubmittingComment(prev => ({ ...prev, [stageId]: false }));
+    }
   }
 
   async function handleDeploy() {
     if (!deployVersion.trim()) return;
     setDeploying(true);
-    const res = await fetch(`/api/projects/${id}/deployments`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: deployVersion }),
-    });
-    if (res.ok) {
-      // Simulate deployment success for demo
-      const dep = await res.json();
-      setTimeout(async () => {
-        await fetch(`/api/projects/${id}/deployments`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deploymentId: dep.id, status: 'success', log: 'Deployed successfully' }),
-        });
-        fetchProject();
-      }, 2000);
+    try {
+      const res = await fetch(`/api/projects/${id}/deployments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: deployVersion }),
+      });
+      if (res.ok) {
+        toast.success(`部署 ${deployVersion} 已开始`);
+        const dep = await res.json();
+        setTimeout(async () => {
+          await fetch(`/api/projects/${id}/deployments`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deploymentId: dep.id, status: 'success', log: 'Deployed successfully' }),
+          });
+          toast.success('部署完成');
+          fetchProject();
+        }, 2000);
+      } else {
+        toast.error('部署失败');
+      }
+    } catch {
+      toast.error('部署请求失败');
+    } finally {
+      setDeploying(false);
+      setDeployVersion('');
     }
-    setDeploying(false);
-    setDeployVersion('');
-    fetchProject();
   }
 
   async function handleSubmitFeedback() {
     if (!feedbackTitle.trim()) return;
     setSubmittingFeedback(true);
-    await fetch(`/api/projects/${id}/feedback`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: feedbackType, title: feedbackTitle, severity: feedbackSeverity }),
-    });
-    setSubmittingFeedback(false);
-    setFeedbackTitle('');
-    setFeedbackType('feedback');
-    fetchProject();
+    try {
+      await fetch(`/api/projects/${id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: feedbackType, title: feedbackTitle, severity: feedbackSeverity }),
+      });
+      toast.success('反馈已提交');
+    } catch {
+      toast.error('提交失败');
+    } finally {
+      setSubmittingFeedback(false);
+      setFeedbackTitle('');
+      setFeedbackType('feedback');
+      fetchProject();
+    }
   }
 
   async function handleArchive() {
@@ -269,13 +372,25 @@ export default function ProjectDetailPage() {
   }
 
   async function handleRoleChange(step: number, requiredRole: string) {
+    const prevStages = [...project!.stages];
+    setProject(prev => ({
+      ...prev!,
+      stages: prev!.stages.map(s =>
+        s.step === step ? { ...s, requiredRole } : s
+      ),
+    }));
     setEditingRole(null);
-    await fetch(`/api/projects/${id}/stages/${step}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requiredRole }),
-    });
-    fetchProject();
+    try {
+      await fetch(`/api/projects/${id}/stages/${step}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requiredRole }),
+      });
+      toast.success('角色已更新');
+    } catch {
+      setProject(prev => ({ ...prev!, stages: prevStages }));
+      toast.error('更新失败');
+    }
   }
 
   async function loadAgents() {
@@ -287,13 +402,19 @@ export default function ProjectDetailPage() {
   async function saveAgents() {
     setSavingAgents(true);
     const agentIds = workspaceAgents.filter(a => a.assigned).map(a => a.id);
-    await fetch(`/api/projects/${id}/agents`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentIds }),
-    });
-    setSavingAgents(false);
-    setShowAgentAssign(false);
+    try {
+      await fetch(`/api/projects/${id}/agents`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentIds }),
+      });
+      toast.success('Agent 分配已保存');
+    } catch {
+      toast.error('保存失败');
+    } finally {
+      setSavingAgents(false);
+      setShowAgentAssign(false);
+    }
   }
 
   function toggleAgent(agentId: string) {
@@ -307,6 +428,8 @@ export default function ProjectDetailPage() {
     toast.success('项目已删除');
     router.push(`/workspaces/${slug}/projects`);
   }
+
+  // ── Render ──────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -350,383 +473,216 @@ export default function ProjectDetailPage() {
 
       <div className="max-w-6xl mx-auto px-6 pb-6">
         {/* Project actions */}
-        <div className="flex items-center justify-end gap-2 mb-4">
-          {project.status === 'active' && (
-            <button onClick={handleArchive} className="btn btn-secondary btn-sm">归档项目</button>
-          )}
-          {project.status === 'archived' && (
-            <button onClick={handleUnarchive} className="btn btn-secondary btn-sm">恢复项目</button>
-          )}
-          <button onClick={() => setConfirmDelete(true)} className="btn btn-danger btn-sm">删除项目</button>
-          <button
-            onClick={() => setShowCompletedStages(!showCompletedStages)}
-            className="btn btn-ghost btn-sm"
-          >
-            {showCompletedStages ? '折叠已完成' : '展开已完成'}
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          {project.stages.map((stage) => {
-            const isCompleted = stage.status === 'completed';
-            const isHidden = isCompleted && !showCompletedStages;
-            return (
-            <div
-              key={stage.id}
-              className={`border rounded-xl transition-all duration-300 ease-out ${STATUS_COLORS[stage.status]} ${
-                isHidden ? 'max-h-0 opacity-0 overflow-hidden p-0 border-0' : 'max-h-[2000px] opacity-100'
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          {/* View mode toggle */}
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+            <button
+              onClick={() => setFocusMode(false)}
+              className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                !focusMode ? 'bg-white text-gray-900 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 w-12">
-                  <span className={`w-3 h-3 rounded-full ${STATUS_DOT[stage.status]}`} />
-                  <span className="text-sm font-bold text-gray-400">{String(stage.step).padStart(2, '0')}</span>
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold">{stage.name}</h3>
-                    <span className={
-                      stage.status === 'completed' ? 'badge-success' :
-                      stage.status === 'in_progress' ? 'badge-primary' :
-                      stage.status === 'rejected' ? 'badge-error' :
-                      'badge-gray'
-                    }>
-                      {STATUS_LABEL[stage.status]}
-                    </span>
-                    {(stage.status === 'pending' || stage.status === 'in_progress') ? (
-                      <div className="relative" data-role-dropdown>
-                        <button
-                          onClick={() => setEditingRole(editingRole === stage.step ? null : stage.step)}
-                          className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600 hover:bg-gray-200 cursor-pointer"
-                        >
-                          {stage.requiredRole ? (ROLE_LABELS[stage.requiredRole] || stage.requiredRole) : '未设置'} ▾
-                        </button>
-                        {editingRole === stage.step && (
-                          <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1 min-w-[120px]">
-                            {['developer', 'qa', 'delivery_manager', 'pm', 'architect'].map(role => (
-                              <button
-                                key={role}
-                                onClick={() => handleRoleChange(stage.step, role)}
-                                className={`block w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 ${
-                                  stage.requiredRole === role ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
-                                }`}
-                              >
-                                {ROLE_LABELS[role] || role}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      stage.requiredRole && (
-                        <span className="text-xs text-gray-400">
-                          {ROLE_LABELS[stage.requiredRole] || stage.requiredRole}
-                        </span>
-                      )
-                    )}
-                    {stage.assignedAgentName && (
-                      <span className="badge-success font-mono">
-                        {stage.assignedAgentName}
-                      </span>
-                    )}
-                    {(stage.status === 'pending' || stage.status === 'in_progress') && !stage.assignedTo && (
-                      <button
-                        onClick={() => handleAutoAssign(stage.step)}
-                        disabled={assigning === stage.step}
-                        className="badge-primary hover:opacity-80 disabled:opacity-50 cursor-pointer"
-                      >
-                        {assigning === stage.step ? '分配中...' : '自动分配'}
-                      </button>
-                    )}
-                  </div>
-                  {stage.startedAt && (
-                    <p className="text-xs text-gray-400 mt-1">
-                      开始: {new Date(stage.startedAt).toLocaleString('zh-CN')}
-                      {stage.completedAt && ` · 完成: ${new Date(stage.completedAt).toLocaleString('zh-CN')}`}
-                    </p>
-                  )}
-                  {stage.reviewNotes && (
-                    <p className="text-sm text-red-600 mt-2 bg-red-50 rounded p-2">{stage.reviewNotes}</p>
-                  )}
-                  {stage.linkedPRs.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {stage.linkedPRs.map(pr => (
-                        <div key={pr.id} className="text-xs flex items-center gap-2 bg-white rounded px-2 py-1 border border-gray-200">
-                          <span className="font-mono text-gray-500">#{pr.prNumber}</span>
-                          <span className="truncate">{pr.title}</span>
-                          <span className={
-                            pr.state === 'open' ? 'badge-success' :
-                            pr.state === 'merged' ? 'badge-purple' :
-                            'badge-error'
-                          }>
-                            {pr.state === 'open' ? 'open' : pr.state === 'merged' ? 'merged' : pr.state}
-                          </span>
-                          {pr.sourceBranch && (
-                            <span className="font-mono text-gray-400">{pr.sourceBranch}→{pr.targetBranch}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+              全部展示
+            </button>
+            <button
+              onClick={() => setFocusMode(true)}
+              className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                focusMode ? 'bg-white text-gray-900 shadow-sm font-medium' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              聚焦当前
+            </button>
+          </div>
 
-                  {/* Stage 11: Deployment */}
-                  {stage.step === 11 && (
-                    <div className="mt-2 border-t border-gray-200 pt-2">
-                      {project.latestDeployment && (
-                        <div className="text-xs mb-2">
-                          <span className="text-gray-500">最近部署: </span>
-                          <span className="font-mono">{project.latestDeployment.version}</span>
-                          <span className={
-                            project.latestDeployment.status === 'success' ? 'badge-success' :
-                            project.latestDeployment.status === 'failed' ? 'badge-error' :
-                            project.latestDeployment.status === 'deploying' ? 'badge-primary' :
-                            'badge-gray'
-                          }>{project.latestDeployment.status}</span>
-                          {project.latestDeployment.deployedAt && (
-                            <span className="text-gray-400 ml-1">{new Date(project.latestDeployment.deployedAt).toLocaleString('zh-CN')}</span>
-                          )}
-                        </div>
-                      )}
-                      {stage.status === 'in_progress' && (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={deployVersion}
-                            onChange={(e) => setDeployVersion(e.target.value)}
-                            placeholder="版本号 (如 v1.0.0)"
-                            className="input text-xs py-1"
-                          />
-                          <button
-                            onClick={handleDeploy}
-                            disabled={deploying || !deployVersion.trim()}
-                            className="btn btn-primary btn-sm"
-                          >
-                            {deploying ? '部署中...' : '部署'}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+          <div className="flex items-center gap-2">
+            {project.status === 'active' && (
+              <button onClick={handleArchive} className="btn btn-secondary btn-sm">归档项目</button>
+            )}
+            {project.status === 'archived' && (
+              <button onClick={handleUnarchive} className="btn btn-secondary btn-sm">恢复项目</button>
+            )}
+            <button onClick={() => setConfirmDelete(true)} className="btn btn-danger btn-sm">删除项目</button>
+            {!focusMode && (
+              <button
+                onClick={() => setShowCompletedStages(!showCompletedStages)}
+                className="btn btn-ghost btn-sm"
+              >
+                {showCompletedStages ? '折叠已完成' : '展开已完成'}
+              </button>
+            )}
+            <button
+              onClick={() => setShowActivity(!showActivity)}
+              className={`btn btn-sm ${
+                showActivity ? 'bg-blue-100 text-blue-700' : 'btn-ghost'
+              }`}
+            >
+              活动
+            </button>
+            <button
+              onClick={() => setShowShortcuts(true)}
+              className="btn btn-ghost btn-sm font-mono"
+              title="键盘快捷键"
+            >
+              ?
+            </button>
+          </div>
+        </div>
 
-                  {/* Stage 13: Feedback */}
-                  {stage.step === 13 && (
-                    <div className="mt-2 border-t border-gray-200 pt-2">
-                      {project.recentFeedback?.length > 0 && (
-                        <div className="space-y-1 mb-2">
-                          {project.recentFeedback.map(f => (
-                            <div key={f.id} className="text-xs flex items-center gap-2 bg-white rounded px-2 py-1 border border-gray-100">
-                              <span className={
-                                f.type === 'bug' ? 'badge-error' :
-                                f.type === 'incident' ? 'badge-orange' :
-                                'badge-primary'
-                              }>{f.type}</span>
-                              <span className="truncate">{f.title}</span>
-                              <span className={
-                                f.severity === 'critical' ? 'badge-error' :
-                                f.severity === 'high' ? 'badge-orange' :
-                                'badge-gray'
-                              }>{f.severity}</span>
-                              <span className={
-                                f.status === 'open' ? 'badge-warning' :
-                                f.status === 'resolved' ? 'badge-success' :
-                                'badge-gray'
-                              }>{f.status}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <select
-                          value={feedbackType}
-                          onChange={(e) => setFeedbackType(e.target.value)}
-                          className="select text-xs py-1"
-                        >
-                          <option value="feedback">反馈</option>
-                          <option value="bug">Bug</option>
-                          <option value="incident">事故</option>
-                          <option value="improvement">改进</option>
-                        </select>
-                        <select
-                          value={feedbackSeverity}
-                          onChange={(e) => setFeedbackSeverity(e.target.value)}
-                          className="select text-xs py-1"
-                        >
-                          <option value="low">低</option>
-                          <option value="medium">中</option>
-                          <option value="high">高</option>
-                          <option value="critical">严重</option>
-                        </select>
-                        <input
-                          type="text"
-                          value={feedbackTitle}
-                          onChange={(e) => setFeedbackTitle(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitFeedback(); }}
-                          placeholder="反馈标题..."
-                          className="input text-xs py-1 flex-1"
-                        />
-                        <button
-                          onClick={handleSubmitFeedback}
-                          disabled={submittingFeedback || !feedbackTitle.trim()}
-                          className="btn btn-sm bg-orange-600 text-white hover:bg-orange-700"
-                        >
-                          提交
-                        </button>
-                      </div>
-                    </div>
-                  )}
+        {/* Stage Timeline */}
+        <StageTimeline
+          stages={project.stages}
+          onSelectStage={(step) => {
+            if (focusMode) {
+              setFocusMode(false);
+              setShowCompletedStages(true);
+            }
+            setTimeout(() => {
+              document.getElementById(`stage-${step}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+          }}
+        />
 
-                  {/* Comments section */}
-                  <button
-                    onClick={() => toggleComments(stage.id)}
-                    className="text-xs text-gray-400 hover:text-gray-600 mt-2 flex items-center gap-1"
+        {/* Stage list */}
+        <div className="space-y-3">
+          {project.stages
+            .filter(stage => {
+              if (focusMode) {
+                // Show in-progress, next pending, and rejected stages
+                if (stage.status === 'in_progress' || stage.status === 'rejected') return true;
+                // Show the first pending stage after in-progress
+                const inProgressIdx = project.stages.findIndex(s => s.status === 'in_progress');
+                if (inProgressIdx >= 0) {
+                  const pendingAfter = project.stages.slice(inProgressIdx + 1).find(s => s.status === 'pending');
+                  if (pendingAfter && stage.step === pendingAfter.step) return true;
+                }
+                return false;
+              }
+              return true;
+            })
+            .map((stage, idx) => {
+              const isNewProject = project.stages.every(s => s.status === 'pending');
+              const card = (
+                <StageCard
+                  key={stage.id}
+                  stage={stage}
+                  projectId={id}
+              isHidden={!focusMode && stage.status === 'completed' && !showCompletedStages}
+              acting={acting}
+              assigning={assigning}
+              showReject={showReject}
+              editingRole={editingRole}
+              rejectNotes={rejectNotes}
+              expandedComments={expandedComments}
+              comments={comments}
+              commentText={commentText}
+              submittingComment={submittingComment}
+              latestDeployment={project.latestDeployment}
+              recentFeedback={project.recentFeedback}
+              deployVersion={deployVersion}
+              deploying={deploying}
+              feedbackType={feedbackType}
+              feedbackTitle={feedbackTitle}
+              feedbackSeverity={feedbackSeverity}
+              submittingFeedback={submittingFeedback}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onAutoAssign={handleAutoAssign}
+              onRoleChange={handleRoleChange}
+              onSetEditingRole={setEditingRole}
+              onSetShowReject={setShowReject}
+              onRejectNotesChange={setRejectNotes}
+              onToggleComments={toggleComments}
+              onCommentTextChange={(stageId, text) => setCommentText(prev => ({ ...prev, [stageId]: text }))}
+              onPostComment={handlePostComment}
+              onDeployVersionChange={setDeployVersion}
+              onDeploy={handleDeploy}
+              onFeedbackTypeChange={setFeedbackType}
+              onFeedbackTitleChange={setFeedbackTitle}
+              onFeedbackSeverityChange={setFeedbackSeverity}
+              onFeedbackSubmit={handleSubmitFeedback}
+                />
+              );
+              if (idx === 0 && isNewProject) {
+                return (
+                  <OnboardingTooltip
+                    key={stage.id}
+                    id="project-first-stage"
+                    title="从这里开始"
+                    description="这是项目的第一个交付阶段。点击「通过」推进进度，或使用键盘快捷键 A/R 快速操作。按 ? 查看更多快捷键。"
+                    position="bottom"
                   >
-                    <MessageSquare size={12} />
-                    <span>讨论</span>
-                    {expandedComments.has(stage.id) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                  </button>
-
-                  {expandedComments.has(stage.id) && (
-                    <div className="mt-2 space-y-2">
-                      {(comments[stage.id] || []).map(c => (
-                        <div key={c.id} className="bg-white rounded px-3 py-2 border border-gray-100">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-medium">{c.userName || c.userId}</span>
-                            <span className="text-xs text-gray-400">{new Date(c.createdAt).toLocaleString('zh-CN')}</span>
-                          </div>
-                          <p className="text-sm text-gray-700 whitespace-pre-wrap">{c.content}</p>
-                        </div>
-                      ))}
-                      {(!comments[stage.id] || comments[stage.id].length === 0) && (
-                        <p className="text-xs text-gray-400">暂无评论</p>
-                      )}
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={commentText[stage.id] || ''}
-                          onChange={(e) => setCommentText(prev => ({ ...prev, [stage.id]: e.target.value }))}
-                          onKeyDown={(e) => { if (e.key === 'Enter') handlePostComment(stage.id); }}
-                          placeholder="添加评论..."
-                          className="input text-sm py-1 flex-1"
-                        />
-                        <button
-                          onClick={() => handlePostComment(stage.id)}
-                          disabled={submittingComment[stage.id]}
-                          className="btn btn-primary btn-sm"
-                        >
-                          {submittingComment[stage.id] ? '...' : '发送'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {stage.status === 'in_progress' && (
-                  <div className="flex gap-2">
-                    {showReject === stage.step ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={rejectNotes}
-                          onChange={(e) => setRejectNotes(e.target.value)}
-                          placeholder="驳回原因..."
-                          className="input text-sm py-1 border-red-300"
-                        />
-                        <button
-                          onClick={() => handleReject(stage.step)}
-                          disabled={acting === stage.step}
-                          className="btn btn-danger btn-sm"
-                        >
-                          确认
-                        </button>
-                        <button
-                          onClick={() => { setShowReject(null); setRejectNotes(''); }}
-                          className="px-2 py-1 text-xs border rounded hover:bg-gray-50"
-                        >
-                          取消
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleApprove(stage.step)}
-                          disabled={acting === stage.step}
-                          className="btn btn-success btn-sm"
-                        >
-                          {acting === stage.step ? '...' : '通过'}
-                        </button>
-                        <button
-                          onClick={() => setShowReject(stage.step)}
-                          disabled={acting === stage.step}
-                          className="btn btn-danger btn-sm"
-                        >
-                          驳回
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-          })}
+                    {card}
+                  </OnboardingTooltip>
+                );
+              }
+              return card;
+            })}
         </div>
 
         {/* Agent Assignment */}
-        <div className="mt-8 card p-5">
-          <button
-            onClick={() => showAgentAssign ? setShowAgentAssign(false) : loadAgents()}
-            className="flex items-center justify-between w-full text-left"
-          >
-            <h3 className="font-semibold">Agent 分配</h3>
-            <span className="text-xs text-gray-400">{showAgentAssign ? '收起' : '展开'}</span>
-          </button>
+        <AgentAssignmentPanel
+          show={showAgentAssign}
+          agents={workspaceAgents}
+          saving={savingAgents}
+          onToggle={() => showAgentAssign ? setShowAgentAssign(false) : loadAgents()}
+          onAgentToggle={toggleAgent}
+          onSave={saveAgents}
+        />
 
-          {showAgentAssign && (
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              {workspaceAgents.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-4">暂无 Agent</p>
-              ) : (
-                <div className="space-y-2">
-                  {workspaceAgents.map(agent => (
-                    <label
-                      key={agent.id}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={agent.assigned}
-                        onChange={() => toggleAgent(agent.id)}
-                        className="rounded"
-                      />
-                      <span className="font-medium text-sm flex-1">{agent.name}</span>
-                      <span className="text-xs text-gray-400">{agent.type}</span>
-                      <span className="badge-primary">
-                        {ROLE_LABELS[agent.role] || agent.role}
-                      </span>
-                    </label>
-                  ))}
+        {/* Activity slide-out panel */}
+        {showActivity && (
+          <div className="fixed inset-0 z-30 pointer-events-none">
+            {/* Backdrop - only on mobile */}
+            <div
+              className="absolute inset-0 bg-black/30 md:hidden pointer-events-auto"
+              onClick={() => setShowActivity(false)}
+            />
+            {/* Panel */}
+            <div className={`absolute top-0 right-0 h-full bg-white border-l border-gray-200 shadow-xl pointer-events-auto transition-all duration-300 ${
+              pinnedActivity ? 'w-80' : 'w-72'
+            } max-md:w-full`}>
+              <div className="flex items-center justify-between p-4 border-b border-gray-100">
+                <h3 className="font-semibold text-sm">活动日志</h3>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPinnedActivity(!pinnedActivity)}
+                    className={`text-xs px-2 py-1 rounded transition-colors ${
+                      pinnedActivity ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                    title={pinnedActivity ? '取消固定' : '固定'}
+                  >
+                    {pinnedActivity ? '已固定' : '固定'}
+                  </button>
+                  <button
+                    onClick={() => setShowActivity(false)}
+                    className="text-gray-400 hover:text-gray-600 text-lg leading-none px-1"
+                  >
+                    ×
+                  </button>
                 </div>
-              )}
-              <div className="mt-4 flex justify-end">
-                <button
-                  onClick={saveAgents}
-                  disabled={savingAgents}
-                  className="btn-primary"
-                >
-                  {savingAgents ? '保存中...' : '保存'}
-                </button>
+              </div>
+              <div className="overflow-y-auto p-4" style={{ height: 'calc(100vh - 60px)' }}>
+                <ActivityFeed projectId={id} limit={50} />
               </div>
             </div>
-          )}
-        </div>
-
-        {/* Activity Feed */}
-        <div className="mt-8">
-          <div className="card p-5">
-            <h3 className="section-title mb-4">最近活动</h3>
-            <ActivityFeed projectId={id} limit={20} />
           </div>
-        </div>
+        )}
+
+        {/* Static Activity Feed (hidden when panel is open) */}
+        {!showActivity && (
+          <div className="mt-8">
+            <div className="card p-5">
+              <h3 className="section-title mb-4">最近活动</h3>
+              <ActivityFeed projectId={id} limit={20} />
+            </div>
+          </div>
+        )}
       </div>
+
+      <KeyboardShortcuts
+        open={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+      />
       <ConfirmModal
         open={confirmDelete}
         title="删除项目"

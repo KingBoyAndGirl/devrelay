@@ -87,5 +87,22 @@ export async function PUT(
     orderBy: (stages, { asc }) => [asc(stages.step)],
   });
 
+  // Broadcast stage update to all clients viewing this project
+  try {
+    const io = (globalThis as any).io;
+    if (io) {
+      io.to(`project:${params.id}`).emit('stage_update', {
+        projectId: params.id,
+        step,
+        stageName: stage.name,
+        status: action === 'approve' ? 'completed' : 'rejected',
+        reviewNotes: reviewNotes || '',
+        action,
+        userId: (session.user as any).id,
+        userName: session.user.name,
+      });
+    }
+  } catch {}
+
   return NextResponse.json(updatedStages);
 }

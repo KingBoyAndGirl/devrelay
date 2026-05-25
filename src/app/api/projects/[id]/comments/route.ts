@@ -84,6 +84,14 @@ export async function POST(
 
   await db.insert(comments).values(comment);
 
+  // Broadcast comment to all clients viewing this project
+  try {
+    const io = (globalThis as any).io;
+    if (io) {
+      io.to(`project:${params.id}`).emit('comment', comment);
+    }
+  } catch {}
+
   return NextResponse.json(comment, { status: 201 });
 }
 

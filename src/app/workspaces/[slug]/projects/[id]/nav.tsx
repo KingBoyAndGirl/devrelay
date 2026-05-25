@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 
 const TABS = [
   { href: '', label: '流程看板', pattern: /^\/workspaces\/[^/]+\/projects\/[^/]+$/ },
+  { href: 'dashboard', label: '概览', pattern: /\/dashboard/ },
   { href: 'tasks', label: '任务', pattern: /\/tasks/ },
   { href: 'documents', label: '文档', pattern: /\/documents/ },
   { href: 'prs', label: 'PR', pattern: /\/prs/ },

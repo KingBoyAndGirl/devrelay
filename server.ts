@@ -77,6 +77,19 @@ app.prepare().then(async () => {
         console.log(`[devrelay] User ${userId} subscribed to notifications`);
       }
     });
+
+    socket.on('subscribe:project', (projectId: string) => {
+      if (projectId) {
+        socket.join(`project:${projectId}`);
+        console.log(`[devrelay] Socket ${socket.id} subscribed to project:${projectId}`);
+      }
+    });
+
+    socket.on('unsubscribe:project', (projectId: string) => {
+      if (projectId) {
+        socket.leave(`project:${projectId}`);
+      }
+    });
   });
 
   (globalThis as any).io = io;

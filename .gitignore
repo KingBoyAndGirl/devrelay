@@ -9,6 +9,7 @@
 # next.js
 /.next/
 /out/
+.next/
 
 # production
 /build
@@ -35,6 +36,3 @@ npm-debug.log*
 
 # build
 tsconfig.tsbuildinfo
-
-# chorus
-.chorus/

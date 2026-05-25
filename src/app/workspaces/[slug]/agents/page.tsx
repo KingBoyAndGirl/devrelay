@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Bot, Search } from 'lucide-react';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import CopyButton from '@/components/ui/CopyButton';
+import { OnboardingTooltip } from '@/components/ui/OnboardingTooltip';
 import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 import AgentRunner from '@/components/agents/AgentRunner';
 import { ROLE_LABELS } from '@/types';
@@ -279,12 +280,20 @@ export default function AgentsPage() {
               className="pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-48"
             />
           </div>
-          <Link
-            href={`/workspaces/${slug}/agents/new`}
-            className="btn-primary"
+          <OnboardingTooltip
+            id="agents-register-first"
+            title="注册你的第一个 Agent"
+            description="Agent 可以自动执行开发、测试和部署任务。注册后使用 CLI 命令连接即可开始使用。"
+            position="bottom"
+            showWhen={agents.length === 0}
           >
-            注册 Agent
-          </Link>
+            <Link
+              href={`/workspaces/${slug}/agents/new`}
+              className="btn-primary"
+            >
+              注册 Agent
+            </Link>
+          </OnboardingTooltip>
         </div>
       </div>
 

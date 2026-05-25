@@ -34,12 +34,15 @@ interface PostAction {
   message: string;
 }
 
+type PositionMode = 'inline' | 'drawer' | 'floating';
+
 interface AgentRunnerProps {
   agentId: string;
   agentName: string;
   onClose: () => void;
   projectId?: string;
   taskId?: string;
+  positioned?: PositionMode;
 }
 
 // ── Parse Claude Code stream-json line ───────────────────────────
@@ -131,12 +134,13 @@ interface TaskContext {
   priority: string;
 }
 
-export default function AgentRunner({ agentId, agentName, onClose, projectId, taskId }: AgentRunnerProps) {
+export default function AgentRunner({ agentId, agentName, onClose, projectId, taskId, positioned = 'inline' }: AgentRunnerProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [activeTurn, setActiveTurn] = useState<Turn | null>(null);
   const [prompt, setPrompt] = useState('');
   const [taskContext, setTaskContext] = useState<TaskContext | null>(null);
   const [contextUsed, setContextUsed] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
@@ -441,19 +445,24 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
     allTurns.push(activeTurn);
   }
 
-  return (
-    <div className="bg-gray-900 rounded-xl overflow-hidden border border-gray-700 flex flex-col" style={{ height: '70vh', maxHeight: '800px' }}>
+  const terminal = (
+    <div
+      className={`bg-gray-900 rounded-xl overflow-hidden border border-gray-700 flex flex-col transition-all
+        ${positioned === 'drawer' ? 'rounded-b-none animate-slide-up' : ''}
+        ${positioned === 'floating' ? (minimized ? 'h-auto' : 'shadow-2xl') : ''}`}
+      style={positioned === 'inline' ? { height: '70vh', maxHeight: '800px' } : undefined}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-green-400 font-mono text-sm truncate">▶ {agentName}</span>
           {activeTurn?.status === 'running' && statusBadge(activeTurn)}
-          <span className="text-xs text-gray-500 font-mono">
-            {turns.length} 轮对话
-          </span>
+          {positioned !== 'floating' && (
+            <span className="text-xs text-gray-500 font-mono">{turns.length} 轮对话</span>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          {turns.length > 0 && (
+          {turns.length > 0 && positioned !== 'floating' && (
             <button
               onClick={() => { setTurns([]); setActiveTurn(null); }}
               className="text-gray-500 hover:text-gray-300 text-xs"
@@ -461,15 +470,25 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
               清空历史
             </button>
           )}
+          {positioned === 'floating' && (
+            <button
+              onClick={() => setMinimized(!minimized)}
+              className="text-gray-400 hover:text-white text-sm"
+              title={minimized ? '展开' : '最小化'}
+            >
+              {minimized ? '□' : '_'}
+            </button>
+          )}
           <button onClick={onClose} className="text-gray-400 hover:text-white text-sm">✕</button>
         </div>
       </div>
 
-      {/* Conversation thread */}
+      {/* Conversation + Input — hidden when minimized in floating mode */}
+      {!(positioned === 'floating' && minimized) && (<>
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 space-y-6"
+        className={`overflow-y-auto p-4 space-y-6 ${positioned === 'floating' ? 'max-h-72' : 'flex-1'}`}
       >
         {allTurns.length === 0 && (
           <div className="flex items-center justify-center h-full text-gray-600 text-sm">
@@ -618,6 +637,32 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
           </div>
         </div>
       </div>
+      </>)}
     </div>
   );
+
+  // ── Positioning wrapper ─────────────────────────────────
+
+  if (positioned === 'drawer') {
+    return (
+      <>
+        <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+        <div className="fixed bottom-0 left-0 right-0 z-50 max-md:top-0" style={{ maxHeight: '60vh' }}>
+          <div className="max-md:h-screen max-md:max-h-full" style={{ maxHeight: '60vh' }}>
+            {terminal}
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (positioned === 'floating') {
+    return (
+      <div className="fixed bottom-4 right-4 z-50 w-96 max-md:inset-0 max-md:w-full">
+        {terminal}
+      </div>
+    );
+  }
+
+  return terminal;
 }

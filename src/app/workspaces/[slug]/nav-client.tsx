@@ -21,12 +21,12 @@ const NAV_ITEMS = [
   { href: '/settings', label: '设置', icon: Settings },
 ];
 
-export function WorkspaceNav({ slug }: { slug: string }) {
+export function WorkspaceNav({ slug, collapsed }: { slug: string; collapsed?: boolean }) {
   const pathname = usePathname();
   const base = `/workspaces/${slug}`;
 
   return (
-    <nav className="flex-1 px-3 py-4 space-y-0.5">
+    <nav className={`flex-1 px-3 py-4 space-y-0.5 ${collapsed ? 'px-1.5' : ''}`}>
       {NAV_ITEMS.map((item) => {
         const href = item.href ? `${base}${item.href}` : base;
         const active = item.href === ''
@@ -39,18 +39,21 @@ export function WorkspaceNav({ slug }: { slug: string }) {
           <Link
             key={item.label}
             href={href}
+            title={collapsed ? item.label : undefined}
             className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors relative ${
+              collapsed ? 'justify-center px-2' : ''
+            } ${
               active
                 ? 'bg-blue-50 text-blue-700 font-medium'
                 : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
             }`}
           >
-            {active && (
+            {active && !collapsed && (
               <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-blue-600 rounded-r-full" />
             )}
             <Icon size={16} className={active ? 'text-blue-600' : 'text-gray-400'} />
-            <span>{item.label}</span>
-            {item.badge && <NotificationNavBadge />}
+            {!collapsed && <span>{item.label}</span>}
+            {item.badge && !collapsed && <NotificationNavBadge />}
           </Link>
         );
       })}

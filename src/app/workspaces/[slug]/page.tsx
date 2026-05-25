@@ -18,7 +18,7 @@ interface RecentProject {
   id: string;
   name: string;
   status: string;
-  stages: Array<{ step: number; status: string }>;
+  stages: Array<{ step: number; name: string; status: string }>;
   updatedAt: string;
 }
 
@@ -27,6 +27,7 @@ export default function WorkspacePage() {
   const slug = params.slug as string;
   const [stats, setStats] = useState<Stats | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [activeProjects, setActiveProjects] = useState<RecentProject[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -50,11 +51,9 @@ export default function WorkspacePage() {
       });
 
       if (Array.isArray(projects)) {
-        setRecentProjects(
-          projects
-            .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-            .slice(0, 4)
-        );
+        const sorted = projects.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        setRecentProjects(sorted.slice(0, 4));
+        setActiveProjects(sorted.filter((p: any) => p.status === 'active'));
       }
 
       setLoading(false);
@@ -119,6 +118,58 @@ export default function WorkspacePage() {
             icon={<Users className="w-5 h-5" />}
             color="amber"
           />
+        </div>
+      )}
+
+      {/* Pipeline Health */}
+      {activeProjects.length > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-gray-800">交付总览</h3>
+            <span className="text-xs text-gray-400">{activeProjects.length} 个活跃项目</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {activeProjects.map(p => {
+              const doneCount = p.stages.filter(s => s.status === 'completed').length;
+              const progress = p.stages.length ? Math.round((doneCount / p.stages.length) * 100) : 0;
+              const activeStage = p.stages.find(s => s.status === 'in_progress');
+              return (
+                <Link
+                  key={p.id}
+                  href={`/workspaces/${slug}/projects/${p.id}`}
+                  className="card-hover p-4 block"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-semibold text-sm truncate">{p.name}</h4>
+                    <span className="text-xs text-gray-400">
+                      {new Date(p.updatedAt).toLocaleDateString('zh-CN')}
+                    </span>
+                  </div>
+                  {/* Mini dots */}
+                  <div className="flex items-center gap-1 mb-2">
+                    {p.stages.map(s => (
+                      <span
+                        key={s.step}
+                        title={`${s.step}. ${s.name}: ${s.status}`}
+                        className={`w-2 h-2 rounded-full ${
+                          s.status === 'completed' ? 'bg-green-500' :
+                          s.status === 'in_progress' ? 'bg-blue-500 ring-1 ring-blue-300' :
+                          s.status === 'rejected' ? 'bg-red-500' :
+                          'bg-gray-300'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">
+                      {activeStage ? `${activeStage.step}. ${activeStage.name}` : '暂无进行中阶段'}
+                    </span>
+                    <span className="text-xs font-medium text-gray-700">{progress}%</span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
         </div>
       )}
 

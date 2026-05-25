@@ -213,3 +213,49 @@
 .fade-in { animation-name: fadeIn; }
 .zoom-in-95 { animation-name: zoomIn95; }
 .duration-150 { animation-duration: 150ms; }
+
+/* ── Form Feedback ─────────────────────────────────────────── */
+
+.field-error {
+  @apply text-xs text-red-600 mt-1 flex items-center gap-1;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.animate-shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+/* ── Keyboard ──────────────────────────────────────────────── */
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: #374151;
+  box-shadow: 0 1px 0 #e5e7eb;
+}
+
+/* ── Slide Up Animation ────────────────────────────────────── */
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}

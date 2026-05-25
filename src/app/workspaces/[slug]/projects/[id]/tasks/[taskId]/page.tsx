@@ -229,15 +229,14 @@ export default function TaskDetailPage() {
         </div>
 
         {showRunner && task.agentId && (
-          <div className="mt-6">
-            <AgentRunner
-              agentId={task.agentId}
-              agentName={`Agent-${task.agentId.slice(0, 8)}`}
-              projectId={projectId}
-              taskId={taskId}
-              onClose={() => setShowRunner(false)}
-            />
-          </div>
+          <AgentRunner
+            agentId={task.agentId}
+            agentName={`Agent-${task.agentId.slice(0, 8)}`}
+            projectId={projectId}
+            taskId={taskId}
+            positioned="drawer"
+            onClose={() => setShowRunner(false)}
+          />
         )}
       </main>
     </div>

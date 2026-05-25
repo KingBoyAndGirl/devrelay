@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import { ListSkeleton } from '@/components/ui/SkeletonLoader';
+import { OnboardingTooltip } from '@/components/ui/OnboardingTooltip';
 
 interface StageInfo {
   id: string;
@@ -65,6 +67,9 @@ export default function TasksPage() {
   const [stages, setStages] = useState<StageInfo[]>([]);
   const [confirmDeleteTask, setConfirmDeleteTask] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [mobileColumn, setMobileColumn] = useState('todo');
 
   useEffect(() => { fetchTasks(); fetchStages(); }, [projectId]);
 
@@ -101,13 +106,57 @@ export default function TasksPage() {
     setSaving(false);
   }
 
-  async function handleStatusChange(taskId: string, newStatus: string) {
-    await fetch(`/api/tasks/${taskId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    fetchTasks();
+  async function updateTaskStatus(taskId: string, newStatus: string) {
+    // Optimistic update
+    const prevTasks = [...tasks];
+    setTasks(tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
+    try {
+      await fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch {
+      setTasks(prevTasks);
+      toast.error('状态更新失败');
+    }
+  }
+
+  function handleDragStart(e: React.DragEvent, taskId: string) {
+    e.dataTransfer.setData('text/plain', taskId);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggingTaskId(taskId);
+  }
+
+  function handleDragEnd() {
+    setDraggingTaskId(null);
+    setDragOverColumn(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, columnKey: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverColumn !== columnKey) {
+      setDragOverColumn(columnKey);
+    }
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    // Only clear if leaving the column itself (not children)
+    if ((e.currentTarget as HTMLElement).contains(e.relatedTarget as HTMLElement)) return;
+    setDragOverColumn(null);
+  }
+
+  function handleDrop(e: React.DragEvent, targetStatus: string) {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('text/plain');
+    if (!taskId) return;
+    const task = tasks.find(t => t.id === taskId);
+    if (task && task.status !== targetStatus) {
+      updateTaskStatus(taskId, targetStatus);
+    }
+    setDragOverColumn(null);
+    setDraggingTaskId(null);
   }
 
   async function handleDelete(taskId: string) {
@@ -197,68 +246,83 @@ export default function TasksPage() {
         {loading ? (
           <ListSkeleton count={5} />
         ) : (
-          <div className="grid grid-cols-4 gap-4" style={{ minHeight: '60vh' }}>
-            {COLUMNS.map(col => (
-              <div key={col.key} className={`${col.color} rounded-xl p-3`}>
-                <div className="flex items-center justify-between mb-3 px-2">
-                  <h3 className="font-semibold text-sm">{col.label}</h3>
-                  <span className="text-xs text-gray-500">{tasksByStatus(col.key).length}</span>
-                </div>
-                <div className="space-y-2">
-                  {tasksByStatus(col.key).map(task => (
-                    <div key={task.id} className="bg-white rounded-lg p-3 shadow-sm border border-gray-100">
-                      <div className="flex items-start justify-between gap-2">
-                        <Link
-                          href={`/workspaces/${slug}/projects/${projectId}/tasks/${task.id}`}
-                          className="font-medium text-sm hover:text-blue-600 flex-1"
-                        >
-                          {task.title}
-                        </Link>
-                        <button
-                          onClick={() => setConfirmDeleteTask(task.id)}
-                          className="text-gray-300 hover:text-red-500 text-xs shrink-0"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      {task.description && (
-                        <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
-                      )}
-                      <div className="flex items-center gap-2 mt-2">
-                        <span className={PRIORITY_COLORS[task.priority] || 'badge-gray'}>
-                          {PRIORITY_LABELS[task.priority] || task.priority}
-                        </span>
-                        {task.stageInfo && (
-                          <span className="badge-purple">
-                            {String(task.stageInfo.step).padStart(2, '0')} {task.stageInfo.name}
-                          </span>
-                        )}
-                        {task.githubIssueId && (
-                          <span className="badge-purple">
-                            #{task.githubIssueId}
-                          </span>
-                        )}
-                        {/* Status change buttons */}
-                        <div className="flex-1" />
-                        <select
-                          value={task.status}
-                          onChange={(e) => handleStatusChange(task.id, e.target.value)}
-                          className="text-xs border border-gray-200 rounded px-1 py-0.5"
-                        >
-                          {COLUMNS.map(c => (
-                            <option key={c.key} value={c.key}>{c.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  ))}
-                  {tasksByStatus(col.key).length === 0 && (
-                    <p className="text-xs text-gray-400 text-center py-4">暂无任务</p>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+          <>
+            {/* Mobile column tabs */}
+            <div className="flex gap-1 overflow-x-auto pb-2 md:hidden">
+              {COLUMNS.map(col => (
+                <button
+                  key={col.key}
+                  onClick={() => setMobileColumn(col.key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                    mobileColumn === col.key
+                      ? 'bg-blue-100 text-blue-700'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {col.label} ({tasksByStatus(col.key).length})
+                </button>
+              ))}
+            </div>
+
+            {/* Desktop: 4-column grid */}
+            <div className="hidden md:grid grid-cols-4 gap-4" style={{ minHeight: '60vh' }}>
+              {COLUMNS.map((col, idx) => {
+                const column = (
+                  <KanbanColumn
+                    col={col}
+                    tasks={tasksByStatus(col.key)}
+                    slug={slug}
+                    projectId={projectId}
+                    dragOverColumn={dragOverColumn}
+                    draggingTaskId={draggingTaskId}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
+                    onUpdateStatus={updateTaskStatus}
+                    onDeleteClick={setConfirmDeleteTask}
+                  />
+                );
+                if (idx === 0) {
+                  return (
+                    <OnboardingTooltip
+                      key={col.key}
+                      id="kanban-drag-drop"
+                      title="拖拽操作"
+                      description="你可以拖拽任务卡片到不同列来更改状态，也可以使用卡片底部的下拉菜单切换状态。"
+                      position="right"
+                    >
+                      {column}
+                    </OnboardingTooltip>
+                  );
+                }
+                return <div key={col.key}>{column}</div>;
+              })}
+            </div>
+
+            {/* Mobile: single column */}
+            <div className="md:hidden" style={{ minHeight: '60vh' }}>
+              {COLUMNS.filter(c => c.key === mobileColumn).map(col => (
+                <KanbanColumn
+                  key={col.key}
+                  col={col}
+                  tasks={tasksByStatus(col.key)}
+                  slug={slug}
+                  projectId={projectId}
+                  dragOverColumn={dragOverColumn}
+                  draggingTaskId={draggingTaskId}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onUpdateStatus={updateTaskStatus}
+                  onDeleteClick={setConfirmDeleteTask}
+                />
+              ))}
+            </div>
+          </>
         )}
       </main>
       <ConfirmModal
@@ -271,5 +335,96 @@ export default function TasksPage() {
         onCancel={() => setConfirmDeleteTask(null)}
       />
     </>
+  );
+}
+
+function KanbanColumn({ col, tasks: columnTasks, slug, projectId, dragOverColumn, draggingTaskId, onDragOver, onDragLeave, onDrop, onDragStart, onDragEnd, onUpdateStatus, onDeleteClick }: {
+  col: { key: string; label: string; color: string };
+  tasks: Task[];
+  slug: string;
+  projectId: string;
+  dragOverColumn: string | null;
+  draggingTaskId: string | null;
+  onDragOver: (e: React.DragEvent, key: string) => void;
+  onDragLeave: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent, status: string) => void;
+  onDragStart: (e: React.DragEvent, taskId: string) => void;
+  onDragEnd: () => void;
+  onUpdateStatus: (taskId: string, status: string) => void;
+  onDeleteClick: (taskId: string) => void;
+}) {
+  return (
+    <div
+      className={`${col.color} rounded-xl p-3 transition-all
+        ${dragOverColumn === col.key ? 'ring-2 ring-blue-400 bg-blue-50' : ''}`}
+      onDragOver={(e) => onDragOver(e, col.key)}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => onDrop(e, col.key)}
+    >
+      <div className="flex items-center justify-between mb-3 px-2">
+        <h3 className="font-semibold text-sm">{col.label}</h3>
+        <span className="text-xs text-gray-500">{columnTasks.length}</span>
+      </div>
+      <div className="space-y-2">
+        {columnTasks.map(task => (
+          <div
+            key={task.id}
+            draggable
+            onDragStart={(e) => onDragStart(e, task.id)}
+            onDragEnd={onDragEnd}
+            className={`bg-white rounded-lg p-3 shadow-sm border border-gray-100 transition-all
+              ${draggingTaskId === task.id ? 'opacity-50 scale-95' : ''}
+              cursor-grab active:cursor-grabbing hover:shadow-md`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-1">
+                <GripVertical size={14} className="text-gray-300 shrink-0 mt-0.5" />
+                <Link
+                  href={`/workspaces/${slug}/projects/${projectId}/tasks/${task.id}`}
+                  className="font-medium text-sm hover:text-blue-600"
+                >
+                  {task.title}
+                </Link>
+              </div>
+              <button
+                onClick={() => onDeleteClick(task.id)}
+                className="text-gray-300 hover:text-red-500 text-xs shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+            {task.description && (
+              <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
+            )}
+            <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <span className={PRIORITY_COLORS[task.priority] || 'badge-gray'}>
+                {PRIORITY_LABELS[task.priority] || task.priority}
+              </span>
+              {task.stageInfo && (
+                <span className="badge-purple">
+                  {String(task.stageInfo.step).padStart(2, '0')} {task.stageInfo.name}
+                </span>
+              )}
+              {task.githubIssueId && (
+                <span className="badge-purple">#{task.githubIssueId}</span>
+              )}
+              <div className="flex-1" />
+              <select
+                value={task.status}
+                onChange={(e) => onUpdateStatus(task.id, e.target.value)}
+                className="text-xs border border-gray-200 rounded px-1 py-0.5"
+              >
+                {COLUMNS.map(c => (
+                  <option key={c.key} value={c.key}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        ))}
+        {columnTasks.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-4">暂无任务</p>
+        )}
+      </div>
+    </div>
   );
 }
