@@ -4,6 +4,11 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { io, Socket } from 'socket.io-client';
+import { toast } from 'sonner';
+import { Bot, Search } from 'lucide-react';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import CopyButton from '@/components/ui/CopyButton';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 import AgentRunner from '@/components/agents/AgentRunner';
 import { ROLE_LABELS } from '@/types';
 
@@ -51,19 +56,19 @@ const AGENT_TYPE_NAMES: Record<string, string> = {
 };
 
 const AGENT_TYPE_BADGES: Record<string, string> = {
-  claude_code: 'bg-purple-100 text-purple-700',
-  codex: 'bg-blue-100 text-blue-700',
-  hermes: 'bg-green-100 text-green-700',
-  openclaw: 'bg-orange-100 text-orange-700',
-  custom: 'bg-gray-100 text-gray-600',
+  claude_code: 'badge-purple',
+  codex: 'badge-primary',
+  hermes: 'badge-success',
+  openclaw: 'badge-orange',
+  custom: 'badge-gray',
 };
 
 const ROLE_BADGES: Record<string, string> = {
-  pm: 'bg-yellow-100 text-yellow-700',
-  architect: 'bg-purple-100 text-purple-700',
-  developer: 'bg-blue-100 text-blue-700',
-  qa: 'bg-green-100 text-green-700',
-  delivery_manager: 'bg-orange-100 text-orange-700',
+  pm: 'badge-warning',
+  architect: 'badge-purple',
+  developer: 'badge-primary',
+  qa: 'badge-success',
+  delivery_manager: 'badge-orange',
 };
 
 export default function AgentsPage() {
@@ -72,6 +77,7 @@ export default function AgentsPage() {
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [activeRunner, setActiveRunner] = useState<string | null>(null);
 
   const [tokens, setTokens] = useState<AgentToken[]>([]);
@@ -84,6 +90,8 @@ export default function AgentsPage() {
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [cliUpdates, setCliUpdates] = useState<Record<string, { latest: string; npmPackage: string }>>({});
   const [updating, setUpdating] = useState<Record<string, 'loading' | 'done' | 'error'>>({});
+  const [confirmDeleteAgent, setConfirmDeleteAgent] = useState<{ id: string; name: string } | null>(null);
+  const [confirmRevokeToken, setConfirmRevokeToken] = useState<{ id: string; name: string } | null>(null);
 
   async function updatePackage(pkg: string) {
     setUpdating(prev => ({ ...prev, [pkg]: 'loading' }));
@@ -198,9 +206,9 @@ export default function AgentsPage() {
     } catch {}
   }
 
-  async function handleDelete(agentId: string, name: string) {
-    if (!confirm(`确定删除 Agent "${name}"？`)) return;
+  async function handleDelete(agentId: string) {
     await fetch(`/api/agents/${agentId}`, { method: 'DELETE' });
+    toast.success('Agent 已删除');
     setAgents(agents.filter(a => a.id !== agentId));
     if (activeRunner === agentId) setActiveRunner(null);
   }
@@ -238,13 +246,13 @@ export default function AgentsPage() {
       if (res.ok) {
         const data = await res.json();
         const cmd = `devrelay configure --token ${data.token} --url ${window.location.origin}`;
-        navigator.clipboard.writeText(cmd);
+        await navigator.clipboard.writeText(cmd);
+        toast.success('已复制到剪贴板');
       }
     } catch {}
   }
 
-  async function handleRevokeToken(id: string, name: string) {
-    if (!confirm(`撤销令牌 "${name}" 后，对应的 Agent 将无法连接。确定继续？`)) return;
+  async function handleRevokeToken(id: string) {
     setTokenLoading(true);
     await fetch(`/api/workspaces/${slug}/agent-token?id=${id}`, { method: 'DELETE' });
     setFullTokens(prev => { const next = { ...prev }; delete next[id]; return next; });
@@ -252,41 +260,58 @@ export default function AgentsPage() {
     setTokenLoading(false);
   }
 
+  const filteredAgents = search
+    ? agents.filter(a => a.name.toLowerCase().includes(search.toLowerCase()))
+    : agents;
+
   return (
-    <div>
+    <>
       <div className="px-6 py-4 flex items-center justify-between">
         <h1 className="text-lg font-bold">Agent 管理</h1>
-        <Link
-          href={`/workspaces/${slug}/agents/new`}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
-        >
-          注册 Agent
-        </Link>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索 Agent..."
+              className="pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-48"
+            />
+          </div>
+          <Link
+            href={`/workspaces/${slug}/agents/new`}
+            className="btn-primary"
+          >
+            注册 Agent
+          </Link>
+        </div>
       </div>
 
-      <main className="max-w-4xl mx-auto p-6 space-y-8">
+      <main className="max-w-6xl mx-auto p-6 space-y-8">
         {/* Registered Agents */}
         <div>
-          <h3 className="font-semibold text-sm text-gray-700 mb-3">已注册的 Agent</h3>
+          <h3 className="section-title mb-3">已注册的 Agent</h3>
           {loading ? (
-            <p className="text-gray-500">加载中...</p>
-          ) : agents.length === 0 ? (
+            <ListSkeleton count={5} />
+          ) : filteredAgents.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
-              <p className="text-base mb-2">还没有注册 Agent</p>
-              <p className="text-sm mb-4">注册 Claude Code、Codex 等 AI 智能体来辅助开发</p>
-              <Link href={`/workspaces/${slug}/agents/new`} className="text-blue-600 hover:underline text-sm">注册第一个 Agent</Link>
+              <Bot className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+              <p className="text-base mb-2">{search ? '未找到匹配的 Agent' : '还没有注册 Agent'}</p>
+              <p className="text-sm mb-4">{search ? '尝试其他搜索词' : '注册 Claude Code、Codex 等 AI 智能体来辅助开发'}</p>
+              {!search && <Link href={`/workspaces/${slug}/agents/new`} className="text-blue-600 hover:underline text-sm">注册第一个 Agent</Link>}
             </div>
           ) : (
             <div className="space-y-4">
-              {agents.map((agent) => (
+              {filteredAgents.map((agent) => (
                 <div key={agent.id}>
-                  <div className="bg-white border border-gray-200 rounded-xl p-5">
+                  <div className="card p-5">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <span className={`text-xs px-2 py-1 rounded ${AGENT_TYPE_BADGES[agent.type] || ''}`}>
+                        <span className={AGENT_TYPE_BADGES[agent.type] || 'badge-gray'}>
                           {AGENT_TYPE_NAMES[agent.type] || agent.type}
                         </span>
-                        <span className={`text-xs px-2 py-1 rounded ${ROLE_BADGES[agent.role] || 'bg-gray-100 text-gray-600'}`}>
+                        <span className={ROLE_BADGES[agent.role] || 'badge-gray'}>
                           {ROLE_LABELS[agent.role] || agent.role}
                         </span>
                         <div>
@@ -306,7 +331,7 @@ export default function AgentsPage() {
                         </button>
                         <Link
                           href={`/workspaces/${slug}/agents/${agent.id}`}
-                          className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+                          className="btn btn-secondary btn-sm"
                         >
                           编辑
                         </Link>
@@ -317,8 +342,8 @@ export default function AgentsPage() {
                           {activeRunner === agent.id ? '收起' : '▶ 执行'}
                         </button>
                         <button
-                          onClick={() => handleDelete(agent.id, agent.name)}
-                          className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+                          onClick={() => setConfirmDeleteAgent({ id: agent.id, name: agent.name })}
+                          className="btn btn-danger btn-sm"
                         >
                           删除
                         </button>
@@ -346,7 +371,7 @@ export default function AgentsPage() {
         {/* Connected Agent Info */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-sm text-gray-700">已连接的 Agent</h3>
+            <h3 className="section-title">已连接的 Agent</h3>
             <button
               onClick={() => { loadAgentInfo(); loadLatestVersion(); loadCliUpdates(); }}
               className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
@@ -358,7 +383,7 @@ export default function AgentsPage() {
             const pkg = 'devrelay-agent';
             const st = updating[pkg];
             return (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+              <div className="alert-warning p-3 mb-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-yellow-700 text-sm font-medium">devrelay-agent 有新版本</span>
@@ -387,11 +412,11 @@ export default function AgentsPage() {
           ) : (
             <div className="space-y-3">
               {agentInfos.map((info) => (
-                <div key={info.id} className="bg-white border border-gray-200 rounded-xl p-4">
+                <div key={info.id} className="card p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <span className={`w-2.5 h-2.5 rounded-full ${info.online ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
                     <span className="text-sm font-medium">{info.name}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${info.online ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                    <span className={info.online ? 'badge-success' : 'badge-gray'}>
                       {info.online ? '已连接' : '未连接'}
                     </span>
                     {info.agentVersion && (
@@ -502,25 +527,20 @@ export default function AgentsPage() {
 
         {/* Agent Tokens */}
         <div>
-          <h3 className="font-semibold text-sm text-gray-700 mb-3">连接令牌</h3>
+          <h3 className="section-title mb-3">连接令牌</h3>
           <p className="text-xs text-gray-500 mb-3">
             为每台宿主机生成独立令牌，在宿主机上运行 <code className="bg-gray-100 px-1 rounded">devrelay configure --token &lt;令牌&gt;</code> 建立连接。
           </p>
 
           {/* New token one-time display */}
           {newToken && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
-              <p className="text-xs text-yellow-800 mb-2 font-medium">令牌 "{newToken.name}" 已生成，请立即复制（仅显示一次）：</p>
+            <div className="alert-warning p-3 mb-3">
+              <p className="text-xs mb-2 font-medium">令牌 "{newToken.name}" 已生成，请立即复制（仅显示一次）：</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-xs bg-white px-2 py-1.5 rounded border border-yellow-300 font-mono break-all">
                   {newToken.token}
                 </code>
-                <button
-                  onClick={() => { navigator.clipboard.writeText(newToken.token); }}
-                  className="px-3 py-1.5 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 shrink-0"
-                >
-                  复制
-                </button>
+                <CopyButton text={newToken.token} className="px-3 py-1.5 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 shrink-0 inline-flex items-center gap-1" />
               </div>
               <div className="mt-3 text-xs text-gray-600 bg-gray-50 rounded p-2">
                 <p className="font-medium mb-1">在宿主机上运行：</p>
@@ -528,12 +548,7 @@ export default function AgentsPage() {
                   <code className="flex-1 text-green-700 bg-white px-2 py-1.5 rounded border border-gray-200 break-all select-all">
                     devrelay configure --token {newToken.token} --url {window.location.origin}
                   </code>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(`devrelay configure --token ${newToken.token} --url ${window.location.origin}`); }}
-                    className="px-2 py-1.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 shrink-0"
-                  >
-                    复制
-                  </button>
+                  <CopyButton text={`devrelay configure --token ${newToken.token} --url ${window.location.origin}`} className="px-2 py-1.5 text-xs bg-gray-600 text-white rounded hover:bg-gray-700 shrink-0 inline-flex items-center gap-1" />
                 </div>
               </div>
               <button
@@ -551,14 +566,14 @@ export default function AgentsPage() {
               {tokens.map((t) => {
                 const info = agentInfos.find(a => a.id === t.id);
                 return (
-                <div key={t.id} className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3">
+                <div key={t.id} className="flex items-center justify-between card px-4 py-3">
                   <div className="flex items-center gap-3">
                     <span className={`w-2.5 h-2.5 rounded-full ${t.online ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">{t.name}</span>
                         <code className="text-xs text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">{t.tokenPreview}</code>
-                        <span className={`text-xs px-1.5 py-0.5 rounded ${t.online ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                        <span className={t.online ? 'badge-success' : 'badge-gray'}>
                           {t.online ? '在线' : '离线'}
                         </span>
                         {info?.agentVersion && (
@@ -584,7 +599,7 @@ export default function AgentsPage() {
                       复制
                     </button>
                     <button
-                      onClick={() => handleRevokeToken(t.id, t.name)}
+                      onClick={() => setConfirmRevokeToken({ id: t.id, name: t.name })}
                       disabled={tokenLoading}
                       className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
                     >
@@ -609,13 +624,13 @@ export default function AgentsPage() {
                 value={newTokenName}
                 onChange={(e) => setNewTokenName(e.target.value)}
                 placeholder="令牌名称（如：生产服务器）"
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input flex-1"
                 autoFocus
               />
               <button
                 onClick={handleGenerateToken}
                 disabled={tokenLoading}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary"
               >
                 {tokenLoading ? '生成中...' : '确认'}
               </button>
@@ -629,13 +644,31 @@ export default function AgentsPage() {
           ) : (
             <button
               onClick={() => setShowCreateForm(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
+              className="btn-primary"
             >
               生成令牌
             </button>
           )}
         </div>
       </main>
-    </div>
+      <ConfirmModal
+        open={confirmDeleteAgent !== null}
+        title="删除 Agent"
+        message={`确定删除 Agent "${confirmDeleteAgent?.name}"？`}
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={() => { const id = confirmDeleteAgent!.id; setConfirmDeleteAgent(null); handleDelete(id); }}
+        onCancel={() => setConfirmDeleteAgent(null)}
+      />
+      <ConfirmModal
+        open={confirmRevokeToken !== null}
+        title="撤销令牌"
+        message={`撤销令牌 "${confirmRevokeToken?.name}" 后，对应的 Agent 将无法连接。确定继续？`}
+        confirmLabel="撤销"
+        variant="danger"
+        onConfirm={() => { const id = confirmRevokeToken!.id; setConfirmRevokeToken(null); handleRevokeToken(id); }}
+        onCancel={() => setConfirmRevokeToken(null)}
+      />
+    </>
   );
 }

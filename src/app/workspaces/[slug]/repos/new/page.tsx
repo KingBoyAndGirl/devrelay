@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { config } from '@/lib/config';
 
 export default function NewRepoPage() {
@@ -14,14 +15,13 @@ export default function NewRepoPage() {
   const [repo, setRepo] = useState('');
   const [accessToken, setAccessToken] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
   const hasGitHubOAuth = !!config.github.clientId;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setError('');
+
 
     const res = await fetch(`/api/workspaces/${slug}/repos`, {
       method: 'POST',
@@ -30,10 +30,11 @@ export default function NewRepoPage() {
     });
 
     if (res.ok) {
+      toast.success('仓库添加成功');
       router.push(`/workspaces/${slug}/repos`);
     } else {
       const data = await res.json();
-      setError(data.error || '添加失败');
+      toast.error(data.error || '添加失败');
     }
     setLoading(false);
   }
@@ -44,10 +45,7 @@ export default function NewRepoPage() {
         <h1 className="text-lg font-bold">添加仓库</h1>
       </div>
 
-      <main className="max-w-lg mx-auto p-6">
-        {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
-        )}
+      <main className="max-w-2xl mx-auto p-6">
 
         {hasGitHubOAuth ? (
           <>

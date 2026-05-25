@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { toast } from 'sonner';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
 import AgentRunner from '@/components/agents/AgentRunner';
 
 interface TaskDetail {
@@ -45,6 +48,7 @@ export default function TaskDetailPage() {
   const [priority, setPriority] = useState('medium');
   const [saving, setSaving] = useState(false);
   const [showRunner, setShowRunner] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     fetch(`/api/tasks/${taskId}`)
@@ -82,16 +86,17 @@ export default function TaskDetailPage() {
   }
 
   async function handleDelete() {
-    if (!confirm('确定删除此任务？')) return;
     await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+    toast.success('任务已删除');
     router.push(`/workspaces/${slug}/projects/${projectId}/tasks`);
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center"><p className="text-gray-500">加载中...</p></div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><DetailSkeleton /></div>;
   if (!task) return <div className="min-h-screen flex items-center justify-center"><p className="text-gray-500">任务未找到</p></div>;
 
   return (
-    <div className="min-h-screen">
+    <>
+      <div className="min-h-screen">
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link href={`/workspaces/${slug}/projects/${projectId}/tasks`} className="text-gray-500 hover:text-gray-700">&larr; 任务看板</Link>
@@ -125,7 +130,7 @@ export default function TaskDetailPage() {
           ) : (
             <button onClick={() => setEditing(true)} className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-xs hover:bg-blue-700">编辑</button>
           )}
-          <button onClick={handleDelete} className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50">删除</button>
+          <button onClick={() => setConfirmDelete(true)} className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50">删除</button>
           {task.agentId && (
             <button
               onClick={() => setShowRunner(!showRunner)}
@@ -137,7 +142,7 @@ export default function TaskDetailPage() {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-6">
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-6">
           {/* Status transitions */}
           <div>
@@ -236,5 +241,15 @@ export default function TaskDetailPage() {
         )}
       </main>
     </div>
+      <ConfirmModal
+        open={confirmDelete}
+        title="删除任务"
+        message="确定删除此任务？"
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={() => { setConfirmDelete(false); handleDelete(); }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+    </>
   );
 }

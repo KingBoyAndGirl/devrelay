@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
 
 interface DocWithContent {
   id: string;
@@ -54,7 +55,7 @@ export default function DocumentEditorPage() {
     setSaving(false);
   }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center"><p className="text-gray-500">加载中...</p></div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><DetailSkeleton /></div>;
   if (!doc) return <div className="min-h-screen flex items-center justify-center"><p className="text-gray-500">文档未找到</p></div>;
 
   return (
@@ -110,7 +111,7 @@ export default function DocumentEditorPage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-6">
         {editing && !preview ? (
           <textarea
             value={content}

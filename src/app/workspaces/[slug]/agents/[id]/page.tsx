@@ -6,6 +6,7 @@ import Link from 'next/link';
 import AgentRunner from '@/components/agents/AgentRunner';
 import { ROLE_LABELS, STAGE_NAMES } from '@/types';
 import { AGENT_TYPES } from '@/lib/agents';
+import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
 import PermissionSelector from '@/components/agents/PermissionSelector';
 import { getDefaultPermissions, PERMISSIONS, ROLE_BADGES, type Role } from '@/lib/permissions';
 
@@ -58,10 +59,10 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  todo: 'bg-gray-100 text-gray-600',
-  in_progress: 'bg-blue-100 text-blue-700',
-  in_review: 'bg-yellow-100 text-yellow-700',
-  done: 'bg-green-100 text-green-700',
+  todo: 'badge-gray',
+  in_progress: 'badge-primary',
+  in_review: 'badge-warning',
+  done: 'badge-success',
 };
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -188,7 +189,7 @@ export default function AgentDetailPage() {
     setShowProjects(false);
   }
 
-  if (loading) return <div className="p-6 text-gray-500">加载中...</div>;
+  if (loading) return <div className="p-6"><DetailSkeleton /></div>;
   if (!agent) return <div className="p-6 text-gray-500">Agent 未找到</div>;
 
   return (
@@ -198,9 +199,9 @@ export default function AgentDetailPage() {
         <h1 className="text-lg font-bold">{agent.name}</h1>
       </div>
 
-      <main className="max-w-4xl mx-auto p-6 space-y-6">
+      <main className="max-w-6xl mx-auto p-6 space-y-6">
         {/* Agent info card */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <div className="card p-5">
           {editing ? (
             /* Edit form */
             <div className="space-y-4">
@@ -214,7 +215,7 @@ export default function AgentDetailPage() {
                 <input
                   type="text" value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input"
                   required
                 />
               </div>
@@ -277,14 +278,14 @@ export default function AgentDetailPage() {
               <div className="flex gap-3">
                 <button
                   onClick={cancelEditing}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+                  className="btn-secondary"
                 >
                   取消
                 </button>
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                  className="btn-primary"
                 >
                   {saving ? '保存中...' : '保存'}
                 </button>
@@ -310,17 +311,13 @@ export default function AgentDetailPage() {
                 <div className="flex gap-2">
                   <button
                     onClick={startEditing}
-                    className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
+                    className="btn btn-secondary btn-sm"
                   >
                     编辑
                   </button>
                   <button
                     onClick={() => handleToggle(agent.enabled)}
-                    className={`px-3 py-1.5 text-xs rounded-lg ${
-                      agent.enabled
-                        ? 'border border-red-300 text-red-600 hover:bg-red-50'
-                        : 'bg-green-600 text-white hover:bg-green-700'
-                    }`}
+                    className={agent.enabled ? 'btn btn-danger btn-sm' : 'btn btn-success btn-sm'}
                   >
                     {agent.enabled ? '禁用' : '启用'}
                   </button>
@@ -363,7 +360,7 @@ export default function AgentDetailPage() {
         </div>
 
         {/* Project assignments */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <div className="card p-5">
           <button
             onClick={() => showProjects ? setShowProjects(false) : loadProjects()}
             className="flex items-center justify-between w-full text-left"
@@ -407,7 +404,7 @@ export default function AgentDetailPage() {
                 <button
                   onClick={saveProjects}
                   disabled={savingProjects}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                  className="btn-primary"
                 >
                   {savingProjects ? '保存中...' : '保存'}
                 </button>
@@ -417,7 +414,7 @@ export default function AgentDetailPage() {
         </div>
 
         {/* Task queue */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5">
+        <div className="card p-5">
           <h3 className="font-semibold mb-4">
             任务队列
             <span className="text-sm text-gray-400 font-normal ml-2">{todoTasks.length} 个待处理</span>
@@ -492,7 +489,7 @@ export default function AgentDetailPage() {
 
         {/* Recent activities */}
         {activities.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="card p-5">
             <h3 className="font-semibold mb-4">最近活动</h3>
             <div className="space-y-2">
               {activities.map(act => (

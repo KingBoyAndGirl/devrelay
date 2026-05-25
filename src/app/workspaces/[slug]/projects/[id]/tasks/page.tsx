@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { toast } from 'sonner';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 
 interface StageInfo {
   id: string;
@@ -34,10 +37,10 @@ const COLUMNS: Array<{ key: string; label: string; color: string }> = [
 ];
 
 const PRIORITY_COLORS: Record<string, string> = {
-  low: 'bg-gray-100 text-gray-600',
-  medium: 'bg-blue-100 text-blue-700',
-  high: 'bg-orange-100 text-orange-700',
-  critical: 'bg-red-100 text-red-700',
+  low: 'badge-gray',
+  medium: 'badge-primary',
+  high: 'badge-orange',
+  critical: 'badge-error',
 };
 
 const PRIORITY_LABELS: Record<string, string> = {
@@ -60,6 +63,7 @@ export default function TasksPage() {
   const [newPriority, setNewPriority] = useState('medium');
   const [newStageId, setNewStageId] = useState('');
   const [stages, setStages] = useState<StageInfo[]>([]);
+  const [confirmDeleteTask, setConfirmDeleteTask] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { fetchTasks(); fetchStages(); }, [projectId]);
@@ -107,8 +111,8 @@ export default function TasksPage() {
   }
 
   async function handleDelete(taskId: string) {
-    if (!confirm('确定删除此任务？')) return;
     await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+    toast.success('任务已删除');
     fetchTasks();
   }
 
@@ -117,12 +121,12 @@ export default function TasksPage() {
   }
 
   return (
-    <div>
+    <>
       <div className="px-6 py-4 flex items-center justify-between">
         <h1 className="text-lg font-bold">任务看板</h1>
         <button
           onClick={() => setShowNew(!showNew)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
+          className="btn-primary"
         >
           {showNew ? '取消' : '新建任务'}
         </button>
@@ -130,14 +134,14 @@ export default function TasksPage() {
 
       <main className="p-6">
         {showNew && (
-          <form onSubmit={handleCreate} className="max-w-lg mx-auto mb-6 bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <form onSubmit={handleCreate} className="max-w-2xl mx-auto mb-6 card p-5 space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">任务标题</label>
               <input
                 type="text"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
                 placeholder="任务描述"
                 required
               />
@@ -147,7 +151,7 @@ export default function TasksPage() {
               <textarea
                 value={newDesc}
                 onChange={(e) => setNewDesc(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
                 rows={3}
               />
             </div>
@@ -156,7 +160,7 @@ export default function TasksPage() {
               <select
                 value={newPriority}
                 onChange={(e) => setNewPriority(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="select"
               >
                 {Object.entries(PRIORITY_LABELS).map(([k, v]) => (
                   <option key={k} value={k}>{v}</option>
@@ -169,7 +173,7 @@ export default function TasksPage() {
                 <select
                   value={newStageId}
                   onChange={(e) => setNewStageId(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="select"
                 >
                   <option value="">不关联阶段</option>
                   {stages.map(s => (
@@ -183,7 +187,7 @@ export default function TasksPage() {
             <button
               type="submit"
               disabled={saving}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary"
             >
               {saving ? '创建中...' : '创建任务'}
             </button>
@@ -191,7 +195,7 @@ export default function TasksPage() {
         )}
 
         {loading ? (
-          <p className="text-gray-500 text-center py-10">加载中...</p>
+          <ListSkeleton count={5} />
         ) : (
           <div className="grid grid-cols-4 gap-4" style={{ minHeight: '60vh' }}>
             {COLUMNS.map(col => (
@@ -211,7 +215,7 @@ export default function TasksPage() {
                           {task.title}
                         </Link>
                         <button
-                          onClick={() => handleDelete(task.id)}
+                          onClick={() => setConfirmDeleteTask(task.id)}
                           className="text-gray-300 hover:text-red-500 text-xs shrink-0"
                         >
                           ✕
@@ -221,16 +225,16 @@ export default function TasksPage() {
                         <p className="text-xs text-gray-500 mt-1 line-clamp-2">{task.description}</p>
                       )}
                       <div className="flex items-center gap-2 mt-2">
-                        <span className={`text-xs px-1.5 py-0.5 rounded ${PRIORITY_COLORS[task.priority] || ''}`}>
+                        <span className={PRIORITY_COLORS[task.priority] || 'badge-gray'}>
                           {PRIORITY_LABELS[task.priority] || task.priority}
                         </span>
                         {task.stageInfo && (
-                          <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
+                          <span className="badge-purple">
                             {String(task.stageInfo.step).padStart(2, '0')} {task.stageInfo.name}
                           </span>
                         )}
                         {task.githubIssueId && (
-                          <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                          <span className="badge-purple">
                             #{task.githubIssueId}
                           </span>
                         )}
@@ -257,6 +261,15 @@ export default function TasksPage() {
           </div>
         )}
       </main>
-    </div>
+      <ConfirmModal
+        open={confirmDeleteTask !== null}
+        title="删除任务"
+        message="确定删除此任务？"
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={() => { const id = confirmDeleteTask!; setConfirmDeleteTask(null); handleDelete(id); }}
+        onCancel={() => setConfirmDeleteTask(null)}
+      />
+    </>
   );
 }

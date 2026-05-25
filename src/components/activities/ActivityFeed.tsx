@@ -1,6 +1,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Play,
+  CheckCircle2,
+  XCircle,
+  GitPullRequest,
+  GitMerge,
+  Rocket,
+  ListTodo,
+  MessageSquare,
+} from 'lucide-react';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 
 interface ActivityItem {
   id: string;
@@ -12,34 +23,19 @@ interface ActivityItem {
   createdAt: string;
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  agent_execution_started: 'Agent 开始执行',
-  agent_execution_completed: 'Agent 执行完成',
-  stage_approved: '阶段通过',
-  stage_rejected: '阶段驳回',
-  pr_created: 'PR 已创建',
-  pr_merged: 'PR 已合并',
-  deployment_started: '部署开始',
-  deployment_completed: '部署完成',
-  deployment_failed: '部署失败',
-  task_created: '任务已创建',
-  task_completed: '任务已完成',
-  feedback_received: '收到反馈',
-};
-
-const ACTION_COLORS: Record<string, string> = {
-  agent_execution_started: 'bg-blue-100 text-blue-700',
-  agent_execution_completed: 'bg-green-100 text-green-700',
-  stage_approved: 'bg-green-100 text-green-700',
-  stage_rejected: 'bg-red-100 text-red-700',
-  pr_created: 'bg-purple-100 text-purple-700',
-  pr_merged: 'bg-purple-100 text-purple-700',
-  deployment_started: 'bg-yellow-100 text-yellow-700',
-  deployment_completed: 'bg-green-100 text-green-700',
-  deployment_failed: 'bg-red-100 text-red-700',
-  task_created: 'bg-gray-100 text-gray-600',
-  task_completed: 'bg-green-100 text-green-700',
-  feedback_received: 'bg-orange-100 text-orange-700',
+const ACTION_META: Record<string, { label: string; badge: string; icon: typeof Play }> = {
+  agent_execution_started:   { label: 'Agent 开始执行', badge: 'badge-primary', icon: Play },
+  agent_execution_completed: { label: 'Agent 执行完成', badge: 'badge-success', icon: CheckCircle2 },
+  stage_approved:            { label: '阶段通过',       badge: 'badge-success', icon: CheckCircle2 },
+  stage_rejected:            { label: '阶段驳回',       badge: 'badge-error',   icon: XCircle },
+  pr_created:                { label: 'PR 已创建',      badge: 'badge-purple',  icon: GitPullRequest },
+  pr_merged:                 { label: 'PR 已合并',      badge: 'badge-purple',  icon: GitMerge },
+  deployment_started:        { label: '部署开始',       badge: 'badge-warning', icon: Rocket },
+  deployment_completed:      { label: '部署完成',       badge: 'badge-success', icon: Rocket },
+  deployment_failed:         { label: '部署失败',       badge: 'badge-error',   icon: XCircle },
+  task_created:              { label: '任务已创建',     badge: 'badge-gray',    icon: ListTodo },
+  task_completed:            { label: '任务已完成',     badge: 'badge-success', icon: CheckCircle2 },
+  feedback_received:         { label: '收到反馈',       badge: 'badge-orange',  icon: MessageSquare },
 };
 
 interface ActivityFeedProps {
@@ -62,7 +58,7 @@ export default function ActivityFeed({ projectId, limit = 50 }: ActivityFeedProp
   }, [projectId, limit]);
 
   if (loading) {
-    return <div className="text-sm text-gray-400 py-4 text-center">加载活动...</div>;
+    return <ListSkeleton count={3} />;
   }
 
   if (activities.length === 0) {
@@ -76,9 +72,16 @@ export default function ActivityFeed({ projectId, limit = 50 }: ActivityFeedProp
           <span className="text-xs text-gray-400 w-36 shrink-0">
             {new Date(act.createdAt).toLocaleString('zh-CN')}
           </span>
-          <span className={`text-xs px-1.5 py-0.5 rounded ${ACTION_COLORS[act.action] || 'bg-gray-100 text-gray-600'}`}>
-            {ACTION_LABELS[act.action] || act.action}
-          </span>
+          {(() => {
+            const meta = ACTION_META[act.action];
+            const Icon = meta?.icon || Play;
+            return (
+              <span className={meta?.badge || 'badge-gray'}>
+                <Icon size={12} />
+                {meta?.label || act.action}
+              </span>
+            );
+          })()}
           {act.actorName && (
             <span className="text-xs text-gray-500">{act.actorName}</span>
           )}

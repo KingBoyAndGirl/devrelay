@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
+import { toast } from 'sonner';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import CopyButton from '@/components/ui/CopyButton';
 
 interface Member {
   id: string;
@@ -45,6 +48,7 @@ export default function WorkspaceSettingsPage() {
   const [inviteRole, setInviteRole] = useState('developer');
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [removingMember, setRemovingMember] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,7 +86,7 @@ export default function WorkspaceSettingsPage() {
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setError('');
+
     const res = await fetch(`/api/workspaces/${slug}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -90,10 +94,11 @@ export default function WorkspaceSettingsPage() {
     });
     if (res.ok) {
       const data = await res.json();
+      toast.success('设置已保存');
       router.push(`/workspaces/${data.slug}`);
     } else {
       const data = await res.json();
-      setError(data.error || '更新失败');
+      toast.error(data.error || '更新失败');
     }
     setLoading(false);
   }
@@ -126,38 +131,38 @@ export default function WorkspaceSettingsPage() {
   }
 
   async function handleDelete() {
-    if (!confirm('确定要删除此空间吗？此操作不可撤销。')) return;
     setDeleting(true);
     const res = await fetch(`/api/workspaces/${slug}`, { method: 'DELETE' });
     if (res.ok) {
+      toast.success('空间已删除');
       router.push('/');
     } else {
       const data = await res.json();
-      setError(data.error || '删除失败');
+      toast.error(data.error || '删除失败');
       setDeleting(false);
     }
   }
 
   return (
-    <div>
+    <>
       <div className="px-6 py-4">
         <h1 className="text-lg font-bold">空间设置</h1>
       </div>
-      <div className="max-w-lg mx-auto p-6 space-y-8">
+      <div className="max-w-2xl mx-auto p-6 space-y-8">
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
+          <div className="alert-error">{error}</div>
         )}
 
         {/* Basic Info */}
         <form onSubmit={handleSave} className="space-y-4">
-          <h3 className="font-semibold text-sm text-gray-700">基本信息</h3>
+          <h3 className="section-title">基本信息</h3>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">空间名称</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input"
               required
             />
           </div>
@@ -166,14 +171,14 @@ export default function WorkspaceSettingsPage() {
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input"
               rows={3}
             />
           </div>
           <button
             type="submit"
             disabled={loading}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+            className="btn-primary"
           >
             {loading ? '保存中...' : '保存'}
           </button>
@@ -183,7 +188,7 @@ export default function WorkspaceSettingsPage() {
 
         {/* Members */}
         <div>
-          <h3 className="font-semibold text-sm text-gray-700 mb-3">
+          <h3 className="section-title mb-3">
             成员管理
             <span className="text-gray-400 font-normal ml-2">{members.length} 人</span>
           </h3>
@@ -192,7 +197,7 @@ export default function WorkspaceSettingsPage() {
           ) : (
             <div className="space-y-2 mb-4">
               {members.map((m) => (
-                <div key={m.id} className="flex items-center justify-between bg-white border border-gray-200 rounded-lg px-4 py-3">
+                <div key={m.id} className="flex items-center justify-between card px-4 py-3">
                   <div>
                     <span className="text-sm font-medium">{m.userName || m.userId}</span>
                     <span className="text-xs text-gray-500 ml-2">{ROLE_LABELS[m.role] || m.role}</span>
@@ -215,12 +220,12 @@ export default function WorkspaceSettingsPage() {
 
         {/* Invitations */}
         <div>
-          <h3 className="font-semibold text-sm text-gray-700 mb-3">邀请成员</h3>
+          <h3 className="section-title mb-3">邀请成员</h3>
           <div className="flex items-center gap-2 mb-3">
             <select
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              className="select"
             >
               {Object.entries(ROLE_LABELS).map(([k, v]) => (
                 <option key={k} value={k}>{v}</option>
@@ -229,25 +234,20 @@ export default function WorkspaceSettingsPage() {
             <button
               onClick={handleCreateInvite}
               disabled={creatingInvite}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary"
             >
               {creatingInvite ? '生成中...' : '生成邀请链接'}
             </button>
           </div>
 
           {inviteLink && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-3">
+            <div className="alert-success p-3 mb-3">
               <p className="text-sm text-green-700 mb-1">邀请链接已生成：</p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 text-xs bg-white px-2 py-1 rounded border border-green-300 truncate">
                   {inviteLink}
                 </code>
-                <button
-                  onClick={() => { navigator.clipboard.writeText(inviteLink); }}
-                  className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
-                >
-                  复制
-                </button>
+                <CopyButton text={inviteLink} className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 inline-flex items-center gap-1" />
               </div>
             </div>
           )}
@@ -281,18 +281,27 @@ export default function WorkspaceSettingsPage() {
         <hr className="border-gray-200" />
 
         {/* Danger zone */}
-        <div className="bg-red-50 border border-red-200 rounded-xl p-5">
-          <h3 className="font-semibold text-red-800">危险区域</h3>
-          <p className="text-sm text-red-600 mt-1 mb-4">删除空间将同时删除所有关联的项目、仓库和智能体。</p>
+        <div className="alert-error p-5 rounded-xl">
+          <h3 className="font-semibold">危险区域</h3>
+          <p className="text-sm mt-1 mb-4">删除空间将同时删除所有关联的项目、仓库和智能体。</p>
           <button
-            onClick={handleDelete}
+            onClick={() => setConfirmDelete(true)}
             disabled={deleting}
-            className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700 disabled:opacity-50"
+            className="btn-danger"
           >
             {deleting ? '删除中...' : '删除此空间'}
           </button>
         </div>
       </div>
-    </div>
+      <ConfirmModal
+        open={confirmDelete}
+        title="删除空间"
+        message="确定要删除此空间吗？此操作不可撤销。"
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={() => { setConfirmDelete(false); handleDelete(); }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+    </>
   );
 }

@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { CheckCircle2, XCircle, GitPullRequest, MessageSquare, Rocket, Info, Bell } from 'lucide-react';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 
 interface Notification {
   id: string;
@@ -15,14 +17,14 @@ interface Notification {
   createdAt: string;
 }
 
-const TYPE_ICONS: Record<string, string> = {
-  stage_approved: 'OK',
-  stage_rejected: 'XX',
-  task_assigned: '>>',
-  pr_opened: '<>',
-  comment: '::',
-  deployment_started: '>>',
-  deployment_completed: 'OK',
+const TYPE_META: Record<string, { icon: typeof Info; color: string }> = {
+  stage_approved: { icon: CheckCircle2, color: 'text-green-500' },
+  stage_rejected: { icon: XCircle, color: 'text-red-500' },
+  task_assigned: { icon: Info, color: 'text-blue-500' },
+  pr_opened: { icon: GitPullRequest, color: 'text-purple-500' },
+  comment: { icon: MessageSquare, color: 'text-gray-500' },
+  deployment_started: { icon: Rocket, color: 'text-yellow-500' },
+  deployment_completed: { icon: CheckCircle2, color: 'text-green-500' },
 };
 
 export default function NotificationsPage() {
@@ -107,11 +109,12 @@ export default function NotificationsPage() {
         )}
       </div>
 
-      <main className="max-w-3xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-6">
         {loading ? (
-          <p className="text-gray-500 text-center py-10">加载中...</p>
+          <ListSkeleton count={5} />
         ) : filtered.length === 0 ? (
           <div className="text-center py-20 text-gray-500">
+            <Bell className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-lg mb-2">
               {filter === 'unread' ? '没有未读通知' : '暂无通知'}
             </p>
@@ -122,12 +125,16 @@ export default function NotificationsPage() {
               <div
                 key={n.id}
                 onClick={() => handleClick(n)}
-                className={`bg-white border rounded-xl p-4 cursor-pointer transition-colors hover:border-blue-300 ${
-                  !n.isRead ? 'border-blue-200 bg-blue-50' : 'border-gray-200'
+                className={`card p-4 cursor-pointer transition-colors hover:border-blue-300 ${
+                  !n.isRead ? 'border-blue-200 bg-blue-50' : ''
                 }`}
               >
                 <div className="flex items-start gap-3">
-                  <span className="text-sm mt-0.5 font-mono">{TYPE_ICONS[n.type] || 'o'}</span>
+                  {(() => {
+                    const meta = TYPE_META[n.type];
+                    const Icon = meta?.icon || Info;
+                    return <Icon size={16} className={`mt-0.5 ${meta?.color || 'text-gray-400'}`} />;
+                  })()}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <h3 className={`text-sm ${!n.isRead ? 'font-semibold' : 'font-medium'}`}>

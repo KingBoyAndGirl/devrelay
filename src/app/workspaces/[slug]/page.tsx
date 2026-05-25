@@ -3,19 +3,31 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { FolderGit2, Bot, Database, Users, Plus, ArrowRight, Bell } from 'lucide-react';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 
 interface Stats {
+  workspaceName: string;
   projectCount: number;
   agentCount: number;
   repoCount: number;
   memberCount: number;
-  workspaceName: string;
+}
+
+interface RecentProject {
+  id: string;
+  name: string;
+  status: string;
+  stages: Array<{ step: number; status: string }>;
+  updatedAt: string;
 }
 
 export default function WorkspacePage() {
   const params = useParams();
   const slug = params.slug as string;
   const [stats, setStats] = useState<Stats | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
@@ -36,67 +48,207 @@ export default function WorkspacePage() {
         repoCount: ws.repositories?.length || 0,
         memberCount: ws.members?.length || 0,
       });
+
+      if (Array.isArray(projects)) {
+        setRecentProjects(
+          projects
+            .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+            .slice(0, 4)
+        );
+      }
+
+      setLoading(false);
     }
     load();
   }, [slug]);
 
-  return (
-    <div className="max-w-4xl mx-auto p-6">
-      <h2 className="text-lg font-semibold mb-6">
-        {stats ? `${stats.workspaceName} 概览` : '概览'}
-      </h2>
+  function progress(stages: RecentProject['stages']) {
+    const done = stages.filter(s => s.status === 'completed').length;
+    return stages.length ? Math.round((done / stages.length) * 100) : 0;
+  }
 
+  if (loading) {
+    return (
+      <div className="max-w-6xl mx-auto p-6">
+        <ListSkeleton count={5} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-lg font-bold">
+          {stats ? `${stats.workspaceName} 概览` : '概览'}
+        </h2>
+        <div className="flex gap-2">
+          <Link href={`/workspaces/${slug}/projects/new`} className="btn-primary text-sm flex items-center gap-1.5">
+            <Plus className="w-4 h-4" /> 新建项目
+          </Link>
+        </div>
+      </div>
+
+      {/* Stat cards */}
       {stats && (
-        <div className="grid grid-cols-4 gap-4 mb-8">
-          <StatCard label="项目" value={stats.projectCount} href={`/workspaces/${slug}/projects`} />
-          <StatCard label="Agent" value={stats.agentCount} href={`/workspaces/${slug}/agents`} />
-          <StatCard label="仓库" value={stats.repoCount} href={`/workspaces/${slug}/repos`} />
-          <StatCard label="成员" value={stats.memberCount} href={`/workspaces/${slug}/settings`} />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <StatCard
+            label="项目"
+            value={stats.projectCount}
+            href={`/workspaces/${slug}/projects`}
+            icon={<FolderGit2 className="w-5 h-5" />}
+            color="blue"
+          />
+          <StatCard
+            label="Agent"
+            value={stats.agentCount}
+            href={`/workspaces/${slug}/agents`}
+            icon={<Bot className="w-5 h-5" />}
+            color="green"
+          />
+          <StatCard
+            label="仓库"
+            value={stats.repoCount}
+            href={`/workspaces/${slug}/repos`}
+            icon={<Database className="w-5 h-5" />}
+            color="purple"
+          />
+          <StatCard
+            label="成员"
+            value={stats.memberCount}
+            href={`/workspaces/${slug}/settings`}
+            icon={<Users className="w-5 h-5" />}
+            color="amber"
+          />
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Link
-          href={`/workspaces/${slug}/repos`}
-          className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow"
-        >
-          <h3 className="font-semibold">仓库</h3>
-          <p className="text-sm text-gray-500 mt-1">管理 GitHub 仓库连接</p>
-        </Link>
-        <Link
-          href={`/workspaces/${slug}/projects`}
-          className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow"
-        >
-          <h3 className="font-semibold">项目</h3>
-          <p className="text-sm text-gray-500 mt-1">管理交付项目和流程</p>
-        </Link>
-        <Link
-          href={`/workspaces/${slug}/agents`}
-          className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow"
-        >
-          <h3 className="font-semibold">Agent</h3>
-          <p className="text-sm text-gray-500 mt-1">管理 AI 智能体</p>
-        </Link>
-        <Link
-          href={`/workspaces/${slug}/settings`}
-          className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow"
-        >
-          <h3 className="font-semibold">设置</h3>
-          <p className="text-sm text-gray-500 mt-1">空间设置与成员管理</p>
-        </Link>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Recent projects */}
+        <div className="lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-800">最近项目</h3>
+            <Link href={`/workspaces/${slug}/projects`} className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+              查看全部 <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
+
+          {recentProjects.length === 0 ? (
+            <div className="text-center py-12 bg-white border border-gray-200 rounded-xl">
+              <FolderGit2 className="w-8 h-8 text-gray-300 mx-auto mb-3" />
+              <p className="text-sm text-gray-500 mb-3">还没有项目</p>
+              <Link href={`/workspaces/${slug}/projects/new`} className="text-sm text-blue-600 hover:underline">
+                创建第一个项目
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {recentProjects.map(p => (
+                <Link
+                  key={p.id}
+                  href={`/workspaces/${slug}/projects/${p.id}`}
+                  className="card-hover p-4 block"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h4 className="font-semibold">{p.name}</h4>
+                      <span className={`text-xs ${
+                        p.status === 'active' ? 'text-green-600' :
+                        p.status === 'completed' ? 'text-blue-600' : 'text-gray-400'
+                      }`}>
+                        {p.status === 'active' ? '进行中' : p.status === 'completed' ? '已完成' : '已归档'}
+                      </span>
+                    </div>
+                    <span className="text-xs text-gray-400">
+                      {new Date(p.updatedAt).toLocaleDateString('zh-CN')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 bg-gray-100 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all"
+                        style={{ width: `${progress(p.stages)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 font-mono">{progress(p.stages)}%</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Quick links sidebar */}
+        <div>
+          <h3 className="font-semibold text-gray-800 mb-4">快捷入口</h3>
+          <div className="space-y-2">
+            <QuickLink
+              href={`/workspaces/${slug}/repos`}
+              icon={<Database className="w-4 h-4" />}
+              label="仓库管理"
+              desc="关联 GitHub 仓库"
+            />
+            <QuickLink
+              href={`/workspaces/${slug}/agents`}
+              icon={<Bot className="w-4 h-4" />}
+              label="Agent 管理"
+              desc="管理 AI 智能体"
+            />
+            <QuickLink
+              href={`/workspaces/${slug}/settings`}
+              icon={<Users className="w-4 h-4" />}
+              label="空间设置"
+              desc="成员与基本设置"
+            />
+            <QuickLink
+              href={`/workspaces/${slug}/notifications`}
+              icon={<Bell className="w-4 h-4" />}
+              label="通知"
+              desc="查看系统通知"
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value, href }: { label: string; value: number; href: string }) {
+function StatCard({ label, value, href, icon, color }: {
+  label: string; value: number; href: string; icon: React.ReactNode; color: string;
+}) {
+  const bgMap: Record<string, string> = {
+    blue: 'bg-blue-50 text-blue-600',
+    green: 'bg-green-50 text-green-600',
+    purple: 'bg-purple-50 text-purple-600',
+    amber: 'bg-amber-50 text-amber-600',
+  };
+
   return (
-    <Link
-      href={href}
-      className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow text-center"
-    >
-      <div className="text-2xl font-bold text-blue-600">{value}</div>
-      <div className="text-sm text-gray-500 mt-1">{label}</div>
+    <Link href={href} className="card-hover p-5">
+      <div className="flex items-center gap-3">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${bgMap[color] || bgMap.blue}`}>
+          {icon}
+        </div>
+        <div>
+          <div className="text-xl font-bold text-gray-900">{value}</div>
+          <div className="text-xs text-gray-500">{label}</div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function QuickLink({ href, icon, label, desc }: {
+  href: string; icon: React.ReactNode; label: string; desc: string;
+}) {
+  return (
+    <Link href={href} className="card-hover p-3 flex items-center gap-3">
+      <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-500">
+        {icon}
+      </div>
+      <div>
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-xs text-gray-400">{desc}</div>
+      </div>
     </Link>
   );
 }

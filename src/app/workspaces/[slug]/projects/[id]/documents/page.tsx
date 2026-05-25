@@ -3,6 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { toast } from 'sonner';
+import { FileText } from 'lucide-react';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 
 interface Doc {
   id: string;
@@ -37,6 +41,7 @@ export default function DocumentsPage() {
   const [docType, setDocType] = useState('prd');
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirmDeleteDoc, setConfirmDeleteDoc] = useState<string | null>(null);
 
   useEffect(() => { fetchDocs(); }, [id]);
 
@@ -64,26 +69,26 @@ export default function DocumentsPage() {
   }
 
   async function handleDelete(docId: string) {
-    if (!confirm('确定删除此文档？')) return;
     await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+    toast.success('文档已删除');
     fetchDocs();
   }
 
   return (
-    <div>
+    <>
       <div className="px-6 py-4 flex items-center justify-between">
         <h1 className="text-lg font-bold">文档中心</h1>
         <button
           onClick={() => setShowNew(!showNew)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
+          className="btn-primary"
         >
           {showNew ? '取消' : '新建文档'}
         </button>
       </div>
 
-      <main className="max-w-4xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-6">
         {showNew && (
-          <form onSubmit={handleCreate} className="bg-white border border-gray-200 rounded-xl p-5 mb-6 space-y-4">
+          <form onSubmit={handleCreate} className="card p-5 mb-6 space-y-4">
             <div className="flex gap-4">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">文档标题</label>
@@ -91,7 +96,7 @@ export default function DocumentsPage() {
                   type="text"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input"
                   placeholder="例如：v2.0 PRD"
                   required
                 />
@@ -101,7 +106,7 @@ export default function DocumentsPage() {
                 <select
                   value={docType}
                   onChange={(e) => setDocType(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="select"
                 >
                   {Object.entries(DOC_TYPES).map(([k, v]) => (
                     <option key={k} value={k}>{v}</option>
@@ -122,7 +127,7 @@ export default function DocumentsPage() {
             <button
               type="submit"
               disabled={saving}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary"
             >
               {saving ? '创建中...' : '创建文档'}
             </button>
@@ -130,19 +135,20 @@ export default function DocumentsPage() {
         )}
 
         {loading ? (
-          <p className="text-gray-500">加载中...</p>
+          <ListSkeleton count={5} />
         ) : docs.length === 0 ? (
           <div className="text-center py-20 text-gray-500">
+            <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-lg mb-2">还没有文档</p>
             <p className="text-sm">创建 PRD、技术方案、测试报告等文档</p>
           </div>
         ) : (
           <div className="space-y-3">
             {docs.map((doc) => (
-              <div key={doc.id} className="bg-white border border-gray-200 rounded-xl p-5 flex items-center justify-between">
+              <div key={doc.id} className="card p-5 flex items-center justify-between">
                 <Link href={`/workspaces/${slug}/projects/${id}/documents/${doc.id}`} className="flex-1">
                   <div className="flex items-center gap-3">
-                    <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">{DOC_TYPES[doc.type] || doc.type}</span>
+                    <span className="badge-primary">{DOC_TYPES[doc.type] || doc.type}</span>
                     <div>
                       <h3 className="font-semibold hover:text-blue-600">{doc.title}</h3>
                       <p className="text-xs text-gray-400">
@@ -152,7 +158,7 @@ export default function DocumentsPage() {
                   </div>
                 </Link>
                 <button
-                  onClick={() => handleDelete(doc.id)}
+                  onClick={() => setConfirmDeleteDoc(doc.id)}
                   className="text-xs text-red-500 hover:text-red-700 px-2"
                 >
                   删除
@@ -162,6 +168,15 @@ export default function DocumentsPage() {
           </div>
         )}
       </main>
-    </div>
+      <ConfirmModal
+        open={confirmDeleteDoc !== null}
+        title="删除文档"
+        message="确定删除此文档？"
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={() => { const id = confirmDeleteDoc!; setConfirmDeleteDoc(null); handleDelete(id); }}
+        onCancel={() => setConfirmDeleteDoc(null)}
+      />
+    </>
   );
 }

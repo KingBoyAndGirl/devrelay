@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
 
 interface RepoItem {
   fullName: string;
@@ -98,8 +99,8 @@ export default function SelectReposPage() {
 
   if (loading) {
     return (
-      <div className="max-w-2xl mx-auto p-6 text-center text-gray-400 py-20">
-        正在加载仓库列表...
+      <div className="max-w-2xl mx-auto p-6 py-20">
+        <ListSkeleton count={5} />
       </div>
     );
   }

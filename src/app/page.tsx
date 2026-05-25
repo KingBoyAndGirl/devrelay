@@ -31,12 +31,12 @@ export default async function HomePage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">我的空间</h2>
           <Link
             href="/workspaces/new"
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors"
+            className="btn-primary"
           >
             新建空间
           </Link>
@@ -51,7 +51,7 @@ export default async function HomePage() {
         ) : (
           <div className="grid gap-4">
             {memberships.map((m) => (
-              <div key={m.workspace!.id} className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow flex items-center justify-between gap-4">
+              <div key={m.workspace!.id} className="card-hover p-5 flex items-center justify-between gap-4">
                 <Link
                   href={`/workspaces/${m.workspace!.slug}`}
                   className="flex-1 min-w-0"
@@ -62,7 +62,7 @@ export default async function HomePage() {
                   )}
                 </Link>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">
+                  <span className="badge-gray">
                     {m.role}
                   </span>
                   {m.role === 'admin' && (

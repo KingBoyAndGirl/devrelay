@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { ListSkeleton } from '@/components/ui/SkeletonLoader';
+import { GitPullRequest } from 'lucide-react';
 
 interface PR {
   id: string;
@@ -69,9 +71,9 @@ export default function PRsPage() {
   }
 
   const STATE_COLORS: Record<string, string> = {
-    open: 'bg-green-100 text-green-700',
-    closed: 'bg-red-100 text-red-700',
-    merged: 'bg-purple-100 text-purple-700',
+    open: 'badge-success',
+    closed: 'badge-error',
+    merged: 'badge-purple',
   };
 
   return (
@@ -80,7 +82,7 @@ export default function PRsPage() {
         <h1 className="text-lg font-bold">Pull Requests</h1>
         <button
           onClick={() => setShowCreate(!showCreate)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
+          className="btn-primary"
           disabled={repos.length === 0}
           title={repos.length === 0 ? '需要先添加有 Token 的仓库' : ''}
         >
@@ -88,19 +90,19 @@ export default function PRsPage() {
         </button>
       </div>
 
-      <main className="max-w-4xl mx-auto p-6">
+      <main className="max-w-6xl mx-auto p-6">
         {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
+          <div className="alert-error mb-4">{error}</div>
         )}
 
         {showCreate && (
-          <form onSubmit={handleCreate} className="bg-white border border-gray-200 rounded-xl p-5 mb-6 space-y-4">
+          <form onSubmit={handleCreate} className="card p-5 mb-6 space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">仓库</label>
               <select
                 value={repoId}
                 onChange={(e) => setRepoId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="select"
                 required
               >
                 <option value="">选择仓库...</option>
@@ -110,40 +112,41 @@ export default function PRsPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">源分支 (head)</label>
-                <input type="text" value={head} onChange={(e) => setHead(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" placeholder="feature/xxx" required />
+                <input type="text" value={head} onChange={(e) => setHead(e.target.value)} className="input font-mono text-sm" placeholder="feature/xxx" required />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">目标分支 (base)</label>
-                <input type="text" value={base} onChange={(e) => setBase(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm" required />
+                <input type="text" value={base} onChange={(e) => setBase(e.target.value)} className="input font-mono text-sm" required />
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">PR 标题</label>
-              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" placeholder="PR 标题" required />
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="input" placeholder="PR 标题" required />
             </div>
-            <button type="submit" disabled={creating} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50">
+            <button type="submit" disabled={creating} className="btn-primary">
               {creating ? '创建中...' : '创建 PR'}
             </button>
           </form>
         )}
 
         {loading ? (
-          <p className="text-gray-500">加载中...</p>
+          <ListSkeleton count={5} />
         ) : prs.length === 0 ? (
           <div className="text-center py-20 text-gray-500">
+            <GitPullRequest className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-lg mb-2">还没有 PR</p>
             <p className="text-sm">通过 Webhook 自动同步或手动创建 PR</p>
           </div>
         ) : (
           <div className="space-y-3">
             {prs.map(pr => (
-              <div key={pr.id} className="bg-white border border-gray-200 rounded-xl p-5">
+              <div key={pr.id} className="card p-5">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-mono text-gray-500">#{pr.prNumber}</span>
                       <h3 className="font-semibold">{pr.title}</h3>
-                      <span className={`text-xs px-2 py-0.5 rounded ${STATE_COLORS[pr.state] || ''}`}>
+                      <span className={STATE_COLORS[pr.state] || 'badge-gray'}>
                         {pr.state === 'open' ? '开放' : pr.state === 'closed' ? '已关闭' : pr.state === 'merged' ? '已合并' : pr.state}
                       </span>
                     </div>

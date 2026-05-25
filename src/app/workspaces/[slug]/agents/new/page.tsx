@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { AGENT_TYPES } from '@/lib/agents';
 import { ROLE_LABELS } from '@/types';
 import PermissionSelector from '@/components/agents/PermissionSelector';
@@ -48,11 +49,11 @@ const ROLE_OPTIONS = Object.entries(ROLE_LABELS)
   .map(([key, label]) => ({ value: key, label }));
 
 const ROLE_BADGES: Record<string, string> = {
-  pm: 'bg-yellow-100 text-yellow-700',
-  architect: 'bg-purple-100 text-purple-700',
-  developer: 'bg-blue-100 text-blue-700',
-  qa: 'bg-green-100 text-green-700',
-  delivery_manager: 'bg-orange-100 text-orange-700',
+  pm: 'badge-warning',
+  architect: 'badge-purple',
+  developer: 'badge-primary',
+  qa: 'badge-success',
+  delivery_manager: 'badge-orange',
 };
 
 export default function NewAgentPage() {
@@ -69,7 +70,6 @@ export default function NewAgentPage() {
   const [gitName, setGitName] = useState('');
   const [gitEmail, setGitEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
   const [discovered, setDiscovered] = useState<DiscoveredCLI[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(true);
@@ -95,7 +95,7 @@ export default function NewAgentPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    setError('');
+
 
     const res = await fetch(`/api/workspaces/${slug}/agents`, {
       method: 'POST',
@@ -113,10 +113,11 @@ export default function NewAgentPage() {
     });
 
     if (res.ok) {
+      toast.success('Agent 注册成功');
       router.push(`/workspaces/${slug}/agents`);
     } else {
       const data = await res.json();
-      setError(data.error || '创建失败');
+      toast.error(data.error || '创建失败');
     }
     setLoading(false);
   }
@@ -131,7 +132,7 @@ export default function NewAgentPage() {
         <h1 className="text-xl font-bold">注册 Agent</h1>
       </header>
 
-      <main className="max-w-lg mx-auto p-6">
+      <main className="max-w-2xl mx-auto p-6">
         {/* CLI Discovery Panel */}
         <div className="mb-5 bg-gray-50 border border-gray-200 rounded-xl p-4">
           <h2 className="text-sm font-medium text-gray-700 mb-3">服务器已检测到的 CLI</h2>
@@ -162,11 +163,8 @@ export default function NewAgentPage() {
           )}
         </div>
 
-        {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
-        )}
 
-        <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="card p-5 space-y-4">
           {/* Type + Role side by side */}
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -174,7 +172,7 @@ export default function NewAgentPage() {
               <select
                 value={type}
                 onChange={(e) => handleTypeChange(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
               >
                 {TYPE_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -196,7 +194,7 @@ export default function NewAgentPage() {
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
               >
                 {ROLE_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -218,7 +216,7 @@ export default function NewAgentPage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input"
               placeholder="例如：后端开发助手"
               required
             />
@@ -291,14 +289,14 @@ export default function NewAgentPage() {
             <button
               type="button"
               onClick={() => router.back()}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+              className="btn-secondary"
             >
               取消
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary"
             >
               {loading ? '注册中...' : '注册 Agent'}
             </button>

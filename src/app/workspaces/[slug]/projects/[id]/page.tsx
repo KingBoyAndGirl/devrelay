@@ -3,6 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
+import { toast } from 'sonner';
+import ConfirmModal from '@/components/ui/ConfirmModal';
+import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
 import { ROLE_LABELS } from '@/types';
 import ActivityFeed from '@/components/activities/ActivityFeed';
 
@@ -104,13 +108,15 @@ export default function ProjectDetailPage() {
   const [comments, setComments] = useState<Record<string, Comment[]>>({});
   const [commentText, setCommentText] = useState<Record<string, string>>({});
   const [submittingComment, setSubmittingComment] = useState<Record<string, boolean>>({});
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showCompletedStages, setShowCompletedStages] = useState(false);
+  const [editingRole, setEditingRole] = useState<number | null>(null);
   const [deployVersion, setDeployVersion] = useState('');
   const [deploying, setDeploying] = useState(false);
   const [feedbackType, setFeedbackType] = useState('feedback');
   const [feedbackTitle, setFeedbackTitle] = useState('');
   const [feedbackSeverity, setFeedbackSeverity] = useState('medium');
   const [submittingFeedback, setSubmittingFeedback] = useState(false);
-  const [editingRole, setEditingRole] = useState<number | null>(null);
   const [showAgentAssign, setShowAgentAssign] = useState(false);
   const [workspaceAgents, setWorkspaceAgents] = useState<Array<{ id: string; name: string; role: string; type: string; assigned: boolean }>>([]);
   const [savingAgents, setSavingAgents] = useState(false);
@@ -248,6 +254,7 @@ export default function ProjectDetailPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'archived' }),
     });
+    toast.success('项目已归档');
     fetchProject();
   }
 
@@ -257,6 +264,7 @@ export default function ProjectDetailPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'active' }),
     });
+    toast.success('项目已恢复');
     fetchProject();
   }
 
@@ -295,15 +303,15 @@ export default function ProjectDetailPage() {
   }
 
   async function handleDelete() {
-    if (!confirm('确定删除此项目？所有关联的任务、阶段和文档将被删除。此操作不可撤销。')) return;
     await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+    toast.success('项目已删除');
     router.push(`/workspaces/${slug}/projects`);
   }
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">加载中...</p>
+        <DetailSkeleton />
       </div>
     );
   }
@@ -323,7 +331,7 @@ export default function ProjectDetailPage() {
   const allComplete = project.stages.every(s => s.status === 'completed');
 
   return (
-    <div>
+    <>
       {/* Progress bar */}
       <div className="px-6 py-3 space-y-2">
         {project.description && (
@@ -340,38 +348,34 @@ export default function ProjectDetailPage() {
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 pb-6">
+      <div className="max-w-6xl mx-auto px-6 pb-6">
         {/* Project actions */}
         <div className="flex items-center justify-end gap-2 mb-4">
           {project.status === 'active' && (
-            <button
-              onClick={handleArchive}
-              className="px-3 py-1.5 text-xs border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              归档项目
-            </button>
+            <button onClick={handleArchive} className="btn btn-secondary btn-sm">归档项目</button>
           )}
           {project.status === 'archived' && (
-            <button
-              onClick={handleUnarchive}
-              className="px-3 py-1.5 text-xs border border-blue-300 text-blue-600 rounded-lg hover:bg-blue-50"
-            >
-              恢复项目
-            </button>
+            <button onClick={handleUnarchive} className="btn btn-secondary btn-sm">恢复项目</button>
           )}
+          <button onClick={() => setConfirmDelete(true)} className="btn btn-danger btn-sm">删除项目</button>
           <button
-            onClick={handleDelete}
-            className="px-3 py-1.5 text-xs border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+            onClick={() => setShowCompletedStages(!showCompletedStages)}
+            className="btn btn-ghost btn-sm"
           >
-            删除项目
+            {showCompletedStages ? '折叠已完成' : '展开已完成'}
           </button>
         </div>
 
         <div className="space-y-3">
-          {project.stages.map((stage) => (
+          {project.stages.map((stage) => {
+            const isCompleted = stage.status === 'completed';
+            const isHidden = isCompleted && !showCompletedStages;
+            return (
             <div
               key={stage.id}
-              className={`border rounded-xl p-4 ${STATUS_COLORS[stage.status]} transition-colors`}
+              className={`border rounded-xl transition-all duration-300 ease-out ${STATUS_COLORS[stage.status]} ${
+                isHidden ? 'max-h-0 opacity-0 overflow-hidden p-0 border-0' : 'max-h-[2000px] opacity-100'
+              }`}
             >
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 w-12">
@@ -381,12 +385,12 @@ export default function ProjectDetailPage() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="font-semibold">{stage.name}</h3>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      stage.status === 'completed' ? 'bg-green-200 text-green-800' :
-                      stage.status === 'in_progress' ? 'bg-blue-200 text-blue-800' :
-                      stage.status === 'rejected' ? 'bg-red-200 text-red-800' :
-                      'bg-gray-200 text-gray-600'
-                    }`}>
+                    <span className={
+                      stage.status === 'completed' ? 'badge-success' :
+                      stage.status === 'in_progress' ? 'badge-primary' :
+                      stage.status === 'rejected' ? 'badge-error' :
+                      'badge-gray'
+                    }>
                       {STATUS_LABEL[stage.status]}
                     </span>
                     {(stage.status === 'pending' || stage.status === 'in_progress') ? (
@@ -421,7 +425,7 @@ export default function ProjectDetailPage() {
                       )
                     )}
                     {stage.assignedAgentName && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-mono">
+                      <span className="badge-success font-mono">
                         {stage.assignedAgentName}
                       </span>
                     )}
@@ -429,7 +433,7 @@ export default function ProjectDetailPage() {
                       <button
                         onClick={() => handleAutoAssign(stage.step)}
                         disabled={assigning === stage.step}
-                        className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50"
+                        className="badge-primary hover:opacity-80 disabled:opacity-50 cursor-pointer"
                       >
                         {assigning === stage.step ? '分配中...' : '自动分配'}
                       </button>
@@ -450,11 +454,11 @@ export default function ProjectDetailPage() {
                         <div key={pr.id} className="text-xs flex items-center gap-2 bg-white rounded px-2 py-1 border border-gray-200">
                           <span className="font-mono text-gray-500">#{pr.prNumber}</span>
                           <span className="truncate">{pr.title}</span>
-                          <span className={`px-1 rounded ${
-                            pr.state === 'open' ? 'bg-green-100 text-green-700' :
-                            pr.state === 'merged' ? 'bg-purple-100 text-purple-700' :
-                            'bg-red-100 text-red-700'
-                          }`}>
+                          <span className={
+                            pr.state === 'open' ? 'badge-success' :
+                            pr.state === 'merged' ? 'badge-purple' :
+                            'badge-error'
+                          }>
                             {pr.state === 'open' ? 'open' : pr.state === 'merged' ? 'merged' : pr.state}
                           </span>
                           {pr.sourceBranch && (
@@ -472,12 +476,12 @@ export default function ProjectDetailPage() {
                         <div className="text-xs mb-2">
                           <span className="text-gray-500">最近部署: </span>
                           <span className="font-mono">{project.latestDeployment.version}</span>
-                          <span className={`ml-2 px-1 rounded ${
-                            project.latestDeployment.status === 'success' ? 'bg-green-100 text-green-700' :
-                            project.latestDeployment.status === 'failed' ? 'bg-red-100 text-red-700' :
-                            project.latestDeployment.status === 'deploying' ? 'bg-blue-100 text-blue-700' :
-                            'bg-gray-100 text-gray-600'
-                          }`}>{project.latestDeployment.status}</span>
+                          <span className={
+                            project.latestDeployment.status === 'success' ? 'badge-success' :
+                            project.latestDeployment.status === 'failed' ? 'badge-error' :
+                            project.latestDeployment.status === 'deploying' ? 'badge-primary' :
+                            'badge-gray'
+                          }>{project.latestDeployment.status}</span>
                           {project.latestDeployment.deployedAt && (
                             <span className="text-gray-400 ml-1">{new Date(project.latestDeployment.deployedAt).toLocaleString('zh-CN')}</span>
                           )}
@@ -490,12 +494,12 @@ export default function ProjectDetailPage() {
                             value={deployVersion}
                             onChange={(e) => setDeployVersion(e.target.value)}
                             placeholder="版本号 (如 v1.0.0)"
-                            className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded"
+                            className="input text-xs py-1"
                           />
                           <button
                             onClick={handleDeploy}
                             disabled={deploying || !deployVersion.trim()}
-                            className="px-3 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50"
+                            className="btn btn-primary btn-sm"
                           >
                             {deploying ? '部署中...' : '部署'}
                           </button>
@@ -511,22 +515,22 @@ export default function ProjectDetailPage() {
                         <div className="space-y-1 mb-2">
                           {project.recentFeedback.map(f => (
                             <div key={f.id} className="text-xs flex items-center gap-2 bg-white rounded px-2 py-1 border border-gray-100">
-                              <span className={`px-1 rounded ${
-                                f.type === 'bug' ? 'bg-red-100 text-red-700' :
-                                f.type === 'incident' ? 'bg-orange-100 text-orange-700' :
-                                'bg-blue-100 text-blue-700'
-                              }`}>{f.type}</span>
+                              <span className={
+                                f.type === 'bug' ? 'badge-error' :
+                                f.type === 'incident' ? 'badge-orange' :
+                                'badge-primary'
+                              }>{f.type}</span>
                               <span className="truncate">{f.title}</span>
-                              <span className={`px-1 rounded ${
-                                f.severity === 'critical' ? 'bg-red-200 text-red-800' :
-                                f.severity === 'high' ? 'bg-orange-200 text-orange-800' :
-                                'bg-gray-200 text-gray-600'
-                              }`}>{f.severity}</span>
-                              <span className={`px-1 rounded ${
-                                f.status === 'open' ? 'bg-yellow-100' :
-                                f.status === 'resolved' ? 'bg-green-100 text-green-700' :
-                                ''
-                              }`}>{f.status}</span>
+                              <span className={
+                                f.severity === 'critical' ? 'badge-error' :
+                                f.severity === 'high' ? 'badge-orange' :
+                                'badge-gray'
+                              }>{f.severity}</span>
+                              <span className={
+                                f.status === 'open' ? 'badge-warning' :
+                                f.status === 'resolved' ? 'badge-success' :
+                                'badge-gray'
+                              }>{f.status}</span>
                             </div>
                           ))}
                         </div>
@@ -535,7 +539,7 @@ export default function ProjectDetailPage() {
                         <select
                           value={feedbackType}
                           onChange={(e) => setFeedbackType(e.target.value)}
-                          className="px-1 py-1 text-xs border border-gray-200 rounded"
+                          className="select text-xs py-1"
                         >
                           <option value="feedback">反馈</option>
                           <option value="bug">Bug</option>
@@ -545,7 +549,7 @@ export default function ProjectDetailPage() {
                         <select
                           value={feedbackSeverity}
                           onChange={(e) => setFeedbackSeverity(e.target.value)}
-                          className="px-1 py-1 text-xs border border-gray-200 rounded"
+                          className="select text-xs py-1"
                         >
                           <option value="low">低</option>
                           <option value="medium">中</option>
@@ -558,12 +562,12 @@ export default function ProjectDetailPage() {
                           onChange={(e) => setFeedbackTitle(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Enter') handleSubmitFeedback(); }}
                           placeholder="反馈标题..."
-                          className="flex-1 px-2 py-1 text-xs border border-gray-200 rounded"
+                          className="input text-xs py-1 flex-1"
                         />
                         <button
                           onClick={handleSubmitFeedback}
                           disabled={submittingFeedback || !feedbackTitle.trim()}
-                          className="px-3 py-1 text-xs bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50"
+                          className="btn btn-sm bg-orange-600 text-white hover:bg-orange-700"
                         >
                           提交
                         </button>
@@ -576,8 +580,9 @@ export default function ProjectDetailPage() {
                     onClick={() => toggleComments(stage.id)}
                     className="text-xs text-gray-400 hover:text-gray-600 mt-2 flex items-center gap-1"
                   >
+                    <MessageSquare size={12} />
                     <span>讨论</span>
-                    {expandedComments.has(stage.id) ? '▲' : '▼'}
+                    {expandedComments.has(stage.id) ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                   </button>
 
                   {expandedComments.has(stage.id) && (
@@ -601,12 +606,12 @@ export default function ProjectDetailPage() {
                           onChange={(e) => setCommentText(prev => ({ ...prev, [stage.id]: e.target.value }))}
                           onKeyDown={(e) => { if (e.key === 'Enter') handlePostComment(stage.id); }}
                           placeholder="添加评论..."
-                          className="flex-1 px-2 py-1 text-sm border border-gray-200 rounded"
+                          className="input text-sm py-1 flex-1"
                         />
                         <button
                           onClick={() => handlePostComment(stage.id)}
                           disabled={submittingComment[stage.id]}
-                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                          className="btn btn-primary btn-sm"
                         >
                           {submittingComment[stage.id] ? '...' : '发送'}
                         </button>
@@ -623,12 +628,12 @@ export default function ProjectDetailPage() {
                           value={rejectNotes}
                           onChange={(e) => setRejectNotes(e.target.value)}
                           placeholder="驳回原因..."
-                          className="px-2 py-1 text-sm border border-red-300 rounded"
+                          className="input text-sm py-1 border-red-300"
                         />
                         <button
                           onClick={() => handleReject(stage.step)}
                           disabled={acting === stage.step}
-                          className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                          className="btn btn-danger btn-sm"
                         >
                           确认
                         </button>
@@ -644,14 +649,14 @@ export default function ProjectDetailPage() {
                         <button
                           onClick={() => handleApprove(stage.step)}
                           disabled={acting === stage.step}
-                          className="px-3 py-1.5 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                          className="btn btn-success btn-sm"
                         >
                           {acting === stage.step ? '...' : '通过'}
                         </button>
                         <button
                           onClick={() => setShowReject(stage.step)}
                           disabled={acting === stage.step}
-                          className="px-3 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                          className="btn btn-danger btn-sm"
                         >
                           驳回
                         </button>
@@ -661,17 +666,18 @@ export default function ProjectDetailPage() {
                 )}
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
 
         {/* Agent Assignment */}
-        <div className="mt-8 bg-white border border-gray-200 rounded-xl p-5">
+        <div className="mt-8 card p-5">
           <button
             onClick={() => showAgentAssign ? setShowAgentAssign(false) : loadAgents()}
             className="flex items-center justify-between w-full text-left"
           >
             <h3 className="font-semibold">Agent 分配</h3>
-            <span className="text-xs text-gray-400">{showAgentAssign ? '收起 ▲' : '展开 ▼'}</span>
+            <span className="text-xs text-gray-400">{showAgentAssign ? '收起' : '展开'}</span>
           </button>
 
           {showAgentAssign && (
@@ -693,7 +699,7 @@ export default function ProjectDetailPage() {
                       />
                       <span className="font-medium text-sm flex-1">{agent.name}</span>
                       <span className="text-xs text-gray-400">{agent.type}</span>
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                      <span className="badge-primary">
                         {ROLE_LABELS[agent.role] || agent.role}
                       </span>
                     </label>
@@ -704,7 +710,7 @@ export default function ProjectDetailPage() {
                 <button
                   onClick={saveAgents}
                   disabled={savingAgents}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                  className="btn-primary"
                 >
                   {savingAgents ? '保存中...' : '保存'}
                 </button>
@@ -715,12 +721,21 @@ export default function ProjectDetailPage() {
 
         {/* Activity Feed */}
         <div className="mt-8">
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
-            <h3 className="font-semibold mb-4">最近活动</h3>
+          <div className="card p-5">
+            <h3 className="section-title mb-4">最近活动</h3>
             <ActivityFeed projectId={id} limit={20} />
           </div>
         </div>
       </div>
-    </div>
+      <ConfirmModal
+        open={confirmDelete}
+        title="删除项目"
+        message="确定删除此项目？所有关联的任务、阶段和文档将被删除。此操作不可撤销。"
+        confirmLabel="删除"
+        variant="danger"
+        onConfirm={() => { setConfirmDelete(false); handleDelete(); }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+    </>
   );
 }

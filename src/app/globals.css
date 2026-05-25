@@ -1,3 +1,215 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    /* Primary */
+    --color-primary: #2563eb;
+    --color-primary-hover: #1d4ed8;
+    --color-primary-light: #eff6ff;
+    --color-primary-ring: #93c5fd;
+
+    /* Semantic */
+    --color-success: #16a34a;
+    --color-success-light: #f0fdf4;
+    --color-warning: #d97706;
+    --color-warning-light: #fffbeb;
+    --color-error: #dc2626;
+    --color-error-light: #fef2f2;
+    --color-info: #0891b2;
+    --color-info-light: #ecfeff;
+
+    /* Surface */
+    --color-bg: #f9fafb;
+    --color-surface: #ffffff;
+    --color-border: #e5e7eb;
+    --color-border-hover: #d1d5db;
+
+    /* Text */
+    --color-text: #111827;
+    --color-text-secondary: #6b7280;
+    --color-text-muted: #9ca3af;
+  }
+}
+
+@layer components {
+  /* ── Buttons ─────────────────────────────────────────────── */
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2
+           px-4 py-2 rounded-lg text-sm font-medium
+           transition-all duration-150
+           focus:outline-none focus:ring-2 focus:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed
+           active:scale-[0.98];
+  }
+
+  .btn-primary {
+    @apply btn bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500;
+  }
+
+  .btn-secondary {
+    @apply btn bg-white text-gray-700 border border-gray-300
+           hover:bg-gray-50 focus:ring-gray-400;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
+  }
+
+  .btn-success {
+    @apply btn bg-green-600 text-white hover:bg-green-700 focus:ring-green-500;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900
+           focus:ring-gray-400;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+
+  /* ── Form Controls ───────────────────────────────────────── */
+
+  .input {
+    @apply w-full px-3 py-2 text-sm
+           bg-white border border-gray-300 rounded-lg
+           text-gray-900 placeholder-gray-400
+           transition-colors duration-150
+           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+           disabled:bg-gray-50 disabled:text-gray-500;
+  }
+
+  .textarea {
+    @apply input resize-none;
+  }
+
+  .select {
+    @apply input cursor-pointer appearance-none pr-9;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.25rem;
+  }
+
+  /* ── Cards ───────────────────────────────────────────────── */
+
+  .card {
+    @apply bg-white border border-gray-200 rounded-xl;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-card-hover hover:-translate-y-0.5;
+  }
+
+  /* ── Badges ──────────────────────────────────────────────── */
+
+  .badge {
+    @apply inline-flex items-center gap-1
+           px-2 py-0.5 rounded-full text-xs font-medium
+           whitespace-nowrap;
+  }
+
+  .badge-primary {
+    @apply badge bg-blue-100 text-blue-700;
+  }
+
+  .badge-success {
+    @apply badge bg-green-100 text-green-700;
+  }
+
+  .badge-warning {
+    @apply badge bg-yellow-100 text-yellow-700;
+  }
+
+  .badge-error {
+    @apply badge bg-red-100 text-red-700;
+  }
+
+  .badge-gray {
+    @apply badge bg-gray-100 text-gray-600;
+  }
+
+  .badge-purple {
+    @apply badge bg-purple-100 text-purple-700;
+  }
+
+  .badge-orange {
+    @apply badge bg-orange-100 text-orange-700;
+  }
+
+  /* ── Alerts ──────────────────────────────────────────────── */
+
+  .alert {
+    @apply px-4 py-3 rounded-lg text-sm border;
+  }
+
+  .alert-error {
+    @apply alert bg-red-50 border-red-200 text-red-700;
+  }
+
+  .alert-success {
+    @apply alert bg-green-50 border-green-200 text-green-700;
+  }
+
+  .alert-warning {
+    @apply alert bg-yellow-50 border-yellow-200 text-yellow-700;
+  }
+
+  .alert-info {
+    @apply alert bg-blue-50 border-blue-200 text-blue-700;
+  }
+
+  /* ── Layout ──────────────────────────────────────────────── */
+
+  .page-header {
+    @apply px-6 py-4 flex items-center justify-between;
+  }
+
+  .section-title {
+    @apply font-semibold text-sm text-gray-700;
+  }
+
+  /* ── Labels ──────────────────────────────────────────────── */
+
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+
+  /* ── Clickable Badge ────────────────────────────────────── */
+
+  .badge-clickable {
+    @apply badge cursor-pointer hover:brightness-95 transition-all duration-150;
+  }
+}
+
+/* ── Animations (outside @layer for specificity) ──────────── */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Sonner animate-in helpers (used by ConfirmModal) */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zoomIn95 {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-in { animation-fill-mode: forwards; }
+.fade-in { animation-name: fadeIn; }
+.zoom-in-95 { animation-name: zoomIn95; }
+.duration-150 { animation-duration: 150ms; }

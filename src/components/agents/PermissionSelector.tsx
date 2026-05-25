@@ -113,7 +113,7 @@ export default function PermissionSelector({ role, onChange }: Props) {
                       {item.label}
                     </span>
                     {isDefault && (
-                      <span className="text-[10px] px-1 py-0.5 rounded bg-blue-50 text-blue-600 ml-auto">
+                      <span className="badge-primary ml-auto" style={{ fontSize: '10px', padding: '1px 4px' }}>
                         默认
                       </span>
                     )}

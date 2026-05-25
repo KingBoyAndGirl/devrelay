@@ -8,6 +8,7 @@ import { SignOutButton } from '@/components/auth/SignOutButton';
 import NotificationBell from '@/components/notifications/NotificationBell';
 import NotificationNavBadge from '@/components/notifications/NotificationNavBadge';
 import AgentActivityPanel from '@/components/agents/AgentActivityPanel';
+import { WorkspaceNav } from './nav-client';
 
 export default async function WorkspaceLayout({
   children,
@@ -26,7 +27,6 @@ export default async function WorkspaceLayout({
   if (!ws) notFound();
 
   const slug = params.slug;
-  const currentPath = ''; // layout doesn't know pathname, children handle active state
 
   return (
     <div className="min-h-screen flex">
@@ -38,14 +38,7 @@ export default async function WorkspaceLayout({
           <AgentActivityPanel slug={slug} />
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          <NavItem href={`/workspaces/${slug}`} label="概览" />
-          <NavItem href={`/workspaces/${slug}/repos`} label="仓库" />
-          <NavItem href={`/workspaces/${slug}/projects`} label="项目" />
-          <NavItem href={`/workspaces/${slug}/agents`} label="Agent" />
-          <NavItem href={`/workspaces/${slug}/notifications`} label="通知" badge={<NotificationNavBadge />} />
-          <NavItem href={`/workspaces/${slug}/settings`} label="设置" />
-        </nav>
+        <WorkspaceNav slug={slug} />
 
         <div className="px-3 py-3 border-t border-gray-100 text-xs text-gray-400 space-y-1">
           <div className="flex items-center gap-2">
@@ -64,17 +57,5 @@ export default async function WorkspaceLayout({
         {children}
       </div>
     </div>
-  );
-}
-
-function NavItem({ href, label, badge }: { href: string; label: string; badge?: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-    >
-      {label}
-      {badge}
-    </Link>
   );
 }

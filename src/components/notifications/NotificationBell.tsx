@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Bell, CheckCircle2, XCircle, GitPullRequest, MessageSquare, Info } from 'lucide-react';
 
 interface NotifItem {
   id: string;
@@ -30,16 +31,13 @@ export default function NotificationBell() {
   useEffect(() => {
     fetchNotifications();
 
-    // SSE for real-time updates
     let eventSource: EventSource | null = null;
 
     function connectSSE() {
       try {
         eventSource = new EventSource('/api/notifications/stream');
 
-        eventSource.addEventListener('connected', () => {
-          // Connection established
-        });
+        eventSource.addEventListener('connected', () => {});
 
         eventSource.addEventListener('message', (e) => {
           try {
@@ -57,12 +55,10 @@ export default function NotificationBell() {
         eventSource.onerror = () => {
           eventSource?.close();
           eventSource = null;
-          // Fall back to polling
           const interval = setInterval(fetchNotifications, 30000);
           return () => clearInterval(interval);
         };
       } catch {
-        // SSE not available, use polling
         const interval = setInterval(fetchNotifications, 30000);
         return () => clearInterval(interval);
       }
@@ -96,12 +92,12 @@ export default function NotificationBell() {
     setNotifications(notifications.map(n => ({ ...n, isRead: true })));
   }
 
-  const typeIcons: Record<string, string> = {
-    stage_approved: 'OK',
-    stage_rejected: 'XX',
-    task_assigned: '>>',
-    pr_opened: '<>',
-    comment: '::',
+  const typeIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
+    stage_approved: { icon: CheckCircle2, color: 'text-green-500' },
+    stage_rejected: { icon: XCircle, color: 'text-red-500' },
+    task_assigned: { icon: Info, color: 'text-blue-500' },
+    pr_opened: { icon: GitPullRequest, color: 'text-purple-500' },
+    comment: { icon: MessageSquare, color: 'text-gray-500' },
   };
 
   return (
@@ -110,9 +106,7 @@ export default function NotificationBell() {
         onClick={() => setOpen(!open)}
         className="relative p-2 hover:bg-gray-100 rounded-lg transition-colors"
       >
-        <svg className="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-        </svg>
+        <Bell size={18} className="text-gray-600" />
         {unreadCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center rounded-full">
             {unreadCount > 9 ? '9+' : unreadCount}
@@ -134,21 +128,25 @@ export default function NotificationBell() {
             {notifications.length === 0 ? (
               <div className="px-4 py-8 text-center text-sm text-gray-400">暂无通知</div>
             ) : (
-              notifications.map(n => (
-                <div
-                  key={n.id}
-                  className={`px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${!n.isRead ? 'bg-blue-50' : ''}`}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="text-sm mt-0.5">{typeIcons[n.type] || 'o'}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{n.title}</p>
-                      <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>
-                      <p className="text-xs text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString('zh-CN')}</p>
+              notifications.map(n => {
+                const typeInfo = typeIcons[n.type];
+                const TypeIcon = typeInfo?.icon || Info;
+                return (
+                  <div
+                    key={n.id}
+                    className={`px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${!n.isRead ? 'bg-blue-50' : ''}`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <TypeIcon size={16} className={`mt-0.5 ${typeInfo?.color || 'text-gray-400'}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{n.title}</p>
+                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>
+                        <p className="text-xs text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString('zh-CN')}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

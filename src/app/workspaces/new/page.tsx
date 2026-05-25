@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
 export default function NewWorkspacePage() {
   const router = useRouter();
@@ -20,7 +21,11 @@ export default function NewWorkspacePage() {
     });
     if (res.ok) {
       const data = await res.json();
+      toast.success('空间创建成功');
       router.push(`/workspaces/${data.slug}`);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      toast.error(data.error || '创建失败');
     }
     setLoading(false);
   }
@@ -30,7 +35,7 @@ export default function NewWorkspacePage() {
       <header className="bg-white border-b border-gray-200 px-6 py-4">
         <h1 className="text-xl font-bold">DevRelay</h1>
       </header>
-      <main className="max-w-lg mx-auto p-6">
+      <main className="max-w-2xl mx-auto p-6">
         <h2 className="text-lg font-semibold mb-4">新建空间</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -39,7 +44,7 @@ export default function NewWorkspacePage() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input"
               placeholder="例如：电商平台"
               required
             />
@@ -49,7 +54,7 @@ export default function NewWorkspacePage() {
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input"
               rows={3}
               placeholder="空间用途说明"
             />
@@ -58,14 +63,14 @@ export default function NewWorkspacePage() {
             <button
               type="button"
               onClick={() => router.back()}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+              className="btn-secondary"
             >
               取消
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary"
             >
               {loading ? '创建中...' : '创建'}
             </button>

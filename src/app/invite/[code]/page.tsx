@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
 
 export default function InviteAcceptPage() {
   const params = useParams();
@@ -46,14 +47,14 @@ export default function InviteAcceptPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">加载邀请...</p>
+        <DetailSkeleton />
       </div>
     );
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white border border-gray-200 rounded-xl p-8 max-w-md w-full text-center">
+      <div className="card p-8 max-w-md w-full text-center">
         {error ? (
           <div>
             <div className="text-red-500 text-lg mb-4">邀请无效</div>
@@ -71,7 +72,7 @@ export default function InviteAcceptPage() {
             <button
               onClick={handleAccept}
               disabled={accepting}
-              className="bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 w-full"
+              className="btn-primary w-full"
             >
               {accepting ? '加入中...' : '接受邀请'}
             </button>

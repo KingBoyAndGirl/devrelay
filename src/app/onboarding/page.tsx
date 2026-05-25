@@ -232,14 +232,14 @@ export default function OnboardingPage() {
         </div>
       </div>
 
-      <main className="max-w-lg mx-auto px-6 pb-20">
+      <main className="max-w-2xl mx-auto px-6 pb-20">
         {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
+          <div className="alert-error mb-4">{error}</div>
         )}
 
         {/* Step 1: Create Workspace */}
         {step === 1 && (
-          <form onSubmit={handleCreateWorkspace} className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+          <form onSubmit={handleCreateWorkspace} className="card p-6 space-y-4">
             <h2 className="text-lg font-semibold">创建你的第一个空间</h2>
             <p className="text-sm text-gray-500">空间是用来组织项目和团队的工作区</p>
             <div>
@@ -248,7 +248,7 @@ export default function OnboardingPage() {
                 type="text"
                 value={wsName}
                 onChange={(e) => setWsName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
                 placeholder="例如：我的团队"
                 required
                 autoFocus
@@ -259,7 +259,7 @@ export default function OnboardingPage() {
               <textarea
                 value={wsDesc}
                 onChange={(e) => setWsDesc(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
                 rows={2}
                 placeholder="团队的工作空间"
               />
@@ -267,7 +267,7 @@ export default function OnboardingPage() {
             <button
               type="submit"
               disabled={wsCreating || !wsName.trim()}
-              className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary w-full"
             >
               {wsCreating ? '创建中...' : '下一步：关联 GitHub →'}
             </button>
@@ -276,7 +276,7 @@ export default function OnboardingPage() {
 
         {/* Step 2: GitHub Repos */}
         {step === 2 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+          <div className="card p-6 space-y-4">
             <h2 className="text-lg font-semibold">关联 GitHub 仓库</h2>
             <p className="text-sm text-gray-500">选择你要导入到项目中的代码仓库</p>
 
@@ -324,13 +324,13 @@ export default function OnboardingPage() {
             ) : null}
 
             <div className="flex gap-3">
-              <button onClick={skipRepos} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+              <button onClick={skipRepos} className="btn-secondary flex-1">
                 跳过
               </button>
               <button
                 onClick={handleImportRepos}
                 disabled={importing}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary flex-1"
               >
                 {importing ? '导入中...' : selectedRepos.size > 0 ? `导入 ${selectedRepos.size} 个仓库 →` : '下一步 →'}
               </button>
@@ -340,7 +340,7 @@ export default function OnboardingPage() {
 
         {/* Step 3: Create Agents */}
         {step === 3 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+          <div className="card p-6 space-y-4">
             <h2 className="text-lg font-semibold">注册 AI Agent</h2>
             <p className="text-sm text-gray-500">AI Agent 会自动认领任务、编写代码和评审</p>
 
@@ -349,17 +349,17 @@ export default function OnboardingPage() {
                 const key = `${a.role}-${a.type}`;
                 const status = agentCreateStatus[key];
                 return (
-                  <div key={key} className="flex items-center justify-between border border-gray-200 rounded-lg px-4 py-3">
+                  <div key={key} className="flex items-center justify-between card px-4 py-3">
                     <div>
                       <p className="text-sm font-medium">{a.label}</p>
                       <p className="text-xs text-gray-400">角色: {ROLE_LABELS[a.role] || a.role}</p>
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded ${
-                      status === 'done' ? 'bg-green-100 text-green-700' :
-                      status === 'creating' ? 'bg-blue-100 text-blue-700' :
-                      status === 'error' ? 'bg-red-100 text-red-700' :
-                      'bg-gray-100 text-gray-500'
-                    }`}>
+                    <span className={
+                      status === 'done' ? 'badge-success' :
+                      status === 'creating' ? 'badge-primary' :
+                      status === 'error' ? 'badge-error' :
+                      'badge-gray'
+                    }>
                       {status === 'done' ? '✓ 已创建' :
                        status === 'creating' ? '创建中...' :
                        status === 'error' ? '失败' : '待创建'}
@@ -370,11 +370,11 @@ export default function OnboardingPage() {
             </div>
 
             <div className="flex gap-3">
-              <button onClick={skipAgents} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">跳过</button>
+              <button onClick={skipAgents} className="btn-secondary flex-1">跳过</button>
               <button
                 onClick={handleCreateAgents}
                 disabled={agentsCreated}
-                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary flex-1"
               >
                 {agentsCreated ? '已创建 →' : '自动创建推荐 Agent →'}
               </button>
@@ -384,7 +384,7 @@ export default function OnboardingPage() {
 
         {/* Step 4: Create Project */}
         {step === 4 && (
-          <form onSubmit={handleCreateProject} className="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
+          <form onSubmit={handleCreateProject} className="card p-6 space-y-4">
             <h2 className="text-lg font-semibold">创建第一个项目</h2>
             <p className="text-sm text-gray-500">项目会按 13 步交付流程自动创建阶段</p>
             <div>
@@ -393,7 +393,7 @@ export default function OnboardingPage() {
                 type="text"
                 value={projName}
                 onChange={(e) => setProjName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
                 placeholder="例如：v2.0 交付"
                 required
                 autoFocus
@@ -405,14 +405,14 @@ export default function OnboardingPage() {
                 type="text"
                 value={projCustomer}
                 onChange={(e) => setProjCustomer(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="input"
                 placeholder="客户公司名称"
               />
             </div>
             <button
               type="submit"
               disabled={projCreating || !projName.trim()}
-              className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary w-full"
             >
               {projCreating ? '创建中...' : '创建项目 →'}
             </button>
@@ -421,7 +421,7 @@ export default function OnboardingPage() {
 
         {/* Step 5: Done */}
         {step === 5 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-6 text-center space-y-4">
+          <div className="card p-6 text-center space-y-4">
             <div className="text-4xl">&#8203;</div>
             <h2 className="text-lg font-semibold">设置完成！</h2>
             <div className="text-sm text-gray-500 space-y-1">
@@ -433,7 +433,7 @@ export default function OnboardingPage() {
             {project && workspace && (
               <Link
                 href={`/workspaces/${workspace.slug}/projects/${project.id}`}
-                className="inline-block bg-blue-600 text-white px-6 py-2.5 rounded-lg text-sm hover:bg-blue-700"
+                className="btn-primary"
               >
                 进入项目看板 →
               </Link>
