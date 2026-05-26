@@ -225,14 +225,36 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
     if (!text) return;
 
     abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
     setPrompt('');
     if (taskContext && !contextUsed) setContextUsed(true);
 
     const lastSessionTurn = [...turns].reverse().find(t => t.cliSessionId);
     const resumeSessionId = lastSessionTurn?.cliSessionId;
+
+    const result = await doExecute(text, resumeSessionId);
+    if (!result) return;
+
+    // Auto-retry: resume failed with stale session, fall back to fresh start
+    if (resumeSessionId && !result.cliSessionId && result.status !== 'done') {
+      const retryResult = await doExecute(text, undefined);
+      if (!retryResult) return;
+      // Update turns with the fallback notice prepended
+      const updatedRetry: Turn = {
+        ...retryResult,
+        resumedFrom: undefined,
+        chunks: [
+          { ts: Date.now(), type: 'raw', content: '会话已过期，已自动重新连接' },
+          ...retryResult.chunks,
+        ],
+      };
+      setTurns(prev => prev.map(t => t.id === retryResult.id ? updatedRetry : t));
+      setActiveTurn(updatedRetry);
+    }
+  }
+
+  async function doExecute(text: string, resumeSessionId: string | undefined): Promise<Turn | null> {
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     const turn: Turn = {
       id: Math.random().toString(36).slice(2, 8),
@@ -272,7 +294,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
         const finished: Turn = { ...turn, status: 'error', errorMessage: `并发已满，队列位置: #${data.queuePosition}`, endedAt: Date.now() };
         setActiveTurn(finished);
         setTurns(prev => [...prev, finished]);
-        return;
+        return finished;
       }
 
       if (!res.ok) {
@@ -280,7 +302,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
         const finished: Turn = { ...turn, status: 'error', errorMessage: data.error || `HTTP ${res.status}`, endedAt: Date.now() };
         setActiveTurn(finished);
         setTurns(prev => [...prev, finished]);
-        return;
+        return finished;
       }
 
       const reader = res.body!.getReader();
@@ -312,7 +334,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
               };
               setActiveTurn(finished);
               setTurns(prev => [...prev, finished]);
-              return;
+              return finished;
             }
 
             if (sseData.type === 'timeout') {
@@ -322,7 +344,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
               };
               setActiveTurn(finished);
               setTurns(prev => [...prev, finished]);
-              return;
+              return finished;
             }
 
             if (sseData.type === 'error') {
@@ -332,7 +354,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
               };
               setActiveTurn(finished);
               setTurns(prev => [...prev, finished]);
-              return;
+              return finished;
             }
 
             if (sseData.type === 'stdout' && sseData.data) {
@@ -396,15 +418,18 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
       const finished: Turn = { ...turn, chunks: [...turn.chunks], diagnostics: [...turn.diagnostics], status: finalStatus, endedAt: Date.now() };
       setActiveTurn(finished);
       setTurns(prev => [...prev, finished]);
+      return finished;
     } catch (err: any) {
       if (err.name === 'AbortError') {
         const finished: Turn = { ...turn, chunks: [...turn.chunks], diagnostics: [...turn.diagnostics], status: 'done', endedAt: Date.now() };
         setActiveTurn(finished);
         setTurns(prev => [...prev, finished]);
+        return finished;
       } else {
         const finished: Turn = { ...turn, chunks: [...turn.chunks], diagnostics: [...turn.diagnostics], status: 'error', errorMessage: `连接错误: ${err.message}`, endedAt: Date.now() };
         setActiveTurn(finished);
         setTurns(prev => [...prev, finished]);
+        return finished;
       }
     }
   }
