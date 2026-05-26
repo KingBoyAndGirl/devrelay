@@ -62,18 +62,27 @@ const DIAG_PATTERNS = [
   /^session id:/i,
   /^-{3,}/,
   /^warning:/i,
-  /^tokens used$/i,
-  /^\d+,\d+$/,
+  /^tokens used/i,
+  /^Tokens used/i,
+  /^\d{1,3}(,\d{3})*$/,
   /^Claude Code v[\d.]+/,
   /^Hermes v[\d.]+/,
   /^user$/,
   /^assistant$/,
+  /^codex$/i,
+  /^owl$/i,
 ];
 
-function isDiagnostic(line: string): boolean {
+function isDiagnosticLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return true;
   return DIAG_PATTERNS.some(p => p.test(trimmed));
+}
+
+function isDiagnostic(text: string): boolean {
+  // Split multi-line chunks and check each line individually
+  const lines = text.split('\n');
+  return lines.every(l => isDiagnosticLine(l));
 }
 
 // ── Parse stream output lines ─────────────────────────────────────
@@ -169,6 +178,8 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUp = useRef(false);
+  const seenContentRef = useRef<Set<string>>(new Set());
+  const userPromptRef = useRef<string>('');
 
   useEffect(() => {
     if (!taskId) return;
@@ -235,6 +246,8 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
 
     setActiveTurn(turn);
     userScrolledUp.current = false;
+    seenContentRef.current = new Set();
+    userPromptRef.current = text;
 
     let streamResult: string | null = null;
 
@@ -315,23 +328,47 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
             }
 
             if (sseData.type === 'stdout' && sseData.data) {
-              const parsed = parseLine(sseData.data);
-              if (parsed) {
+              // Split multi-line chunks and process each line individually
+              const stdoutLines = sseData.data.split('\n');
+              let stdoutUpdated = false;
+              for (const rawLine of stdoutLines) {
+                const parsed = parseLine(rawLine);
+                if (!parsed) continue;
                 if (parsed.type === 'result' && parsed.content === 'success') streamResult = 'success';
+                if (parsed.type === 'raw' || parsed.type === 'text') {
+                  const text = parsed.content.trim();
+                  // Skip echoed user prompt and duplicates
+                  if (!text || text === userPromptRef.current || seenContentRef.current.has(text)) continue;
+                  seenContentRef.current.add(text);
+                }
                 turn.chunks = [...turn.chunks, parsed];
+                stdoutUpdated = true;
+              }
+              if (stdoutUpdated) {
                 setActiveTurn({ ...turn, chunks: [...turn.chunks] });
                 scrollToBottom(false);
               }
             }
 
             if (sseData.type === 'stderr' && sseData.data) {
-              const text = sseData.data.trim();
-              if (!text) continue;
-              if (isDiagnostic(text)) {
-                turn.diagnostics = [...turn.diagnostics, text];
+              // Split multi-line chunks and process each line individually
+              const stderrLines = sseData.data.split('\n');
+              let stderrUpdated = false;
+              for (const line of stderrLines) {
+                const text = line.trim();
+                if (!text) continue;
+                if (isDiagnosticLine(text)) {
+                  turn.diagnostics = [...turn.diagnostics, text];
+                } else if (text !== userPromptRef.current && !seenContentRef.current.has(text)) {
+                  seenContentRef.current.add(text);
+                  turn.chunks = [...turn.chunks, { ts: Date.now(), type: 'raw', content: text }];
+                  stderrUpdated = true;
+                }
+              }
+              if (turn.diagnostics.length) {
                 setActiveTurn({ ...turn, diagnostics: [...turn.diagnostics] });
-              } else {
-                turn.chunks = [...turn.chunks, { ts: Date.now(), type: 'raw', content: text }];
+              }
+              if (stderrUpdated) {
                 setActiveTurn({ ...turn, chunks: [...turn.chunks] });
                 scrollToBottom(false);
               }
