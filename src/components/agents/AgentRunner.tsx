@@ -99,6 +99,12 @@ function parseLine(line: string, cliType?: string): ParsedChunk | null {
     const obj = JSON.parse(trimmed);
     const ts = Date.now();
     const type = obj.type;
+    const sessionId = obj.session_id;
+
+    // system events carry session_id early (multica pattern)
+    if (type === 'system' && sessionId) {
+      return { ts, type: 'result', content: 'session', sessionId };
+    }
 
     if (type === 'assistant') {
       const content = obj.message?.content;
@@ -326,11 +332,16 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
 
             if (sseData.type === 'exit') {
               const success = streamResult === 'success';
+              // Capture sessionId from exit event (Go sidecar passes it for all backends)
+              if (sseData.sessionId && !turn.cliSessionId) {
+                turn.cliSessionId = sseData.sessionId;
+              }
               const finished: Turn = {
                 ...turn, chunks: [...turn.chunks], diagnostics: [...turn.diagnostics],
                 exitCode: sseData.exitCode ?? null,
                 status: success ? 'done' : (sseData.exitCode === 0 ? 'done' : 'error'),
                 endedAt: Date.now(),
+                cliSessionId: turn.cliSessionId,
               };
               setActiveTurn(finished);
               setTurns(prev => [...prev, finished]);
