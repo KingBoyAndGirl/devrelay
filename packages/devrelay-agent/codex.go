@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
@@ -22,11 +23,11 @@ func (b *codexBackend) BuildArgs(_, _ string) []string {
 }
 
 type rpcHandler struct {
-	scanner  *bufio.Scanner
-	stdin    io.Writer
-	mu       sync.Mutex
-	reqID    int
-	pending  map[int]chan jsonAndErr
+	scanner *bufio.Scanner
+	stdin   io.Writer
+	mu      sync.Mutex
+	reqID   int
+	pending map[int]chan jsonAndErr
 }
 
 type jsonAndErr struct {
@@ -94,7 +95,15 @@ func (r *rpcHandler) dispatch(line string, notifFn func(method string, params js
 		delete(r.pending, req.ID)
 		r.mu.Unlock()
 		if ok {
-			ch <- jsonAndErr{Result: req.Result, Err: nil}
+			var errResp struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			}
+			var rpcErr error
+			if json.Unmarshal(req.Error, &errResp) == nil && errResp.Message != "" {
+				rpcErr = fmt.Errorf("%s", errResp.Message)
+			}
+			ch <- jsonAndErr{Result: req.Result, Err: rpcErr}
 			close(ch)
 		}
 		return
@@ -106,14 +115,14 @@ func (r *rpcHandler) dispatch(line string, notifFn func(method string, params js
 	}
 }
 
-func extractCodexThreadID(raw json.RawMessage) string {
-	var resp struct {
-		Thread struct{
+func extractThreadIDFromNotification(params json.RawMessage) string {
+	var ev struct {
+		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
 	}
-	if json.Unmarshal(raw, &resp) == nil && resp.Thread.ID != "" {
-		return resp.Thread.ID
+	if json.Unmarshal(params, &ev) == nil && ev.Thread.ID != "" {
+		return ev.Thread.ID
 	}
 	return ""
 }
@@ -130,9 +139,11 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		resCh <- Result{Status: "failed", Error: err.Error()}
 		return
 	}
+	log.Printf("[codex] app-server started (pid=%d)", cmd.Process.Pid)
 
 	rpc := newRPCHandler(stdin, stdout)
 	turnDone := make(chan string, 2)
+	threadReady := make(chan string, 1) // v2: thread/started delivers thread ID via notification
 	var output strings.Builder
 	var sessionID string
 
@@ -141,7 +152,10 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	go func() {
 		var buf strings.Builder
 		s := bufio.NewScanner(stderr)
-		for s.Scan() { buf.WriteString(s.Text()); buf.WriteByte('\n') }
+		for s.Scan() {
+			buf.WriteString(s.Text())
+			buf.WriteByte('\n')
+		}
 		stderrCh <- buf.String()
 	}()
 
@@ -151,6 +165,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		for rpc.scanner.Scan() {
 			rpc.dispatch(rpc.scanner.Text(), func(method string, params json.RawMessage) {
 				switch method {
+				// v1 notifications (backwards compat)
 				case "codex/event":
 					var ev struct {
 						Type    string `json:"type"`
@@ -166,6 +181,21 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						msgCh <- Message{Type: "text", Text: ev.Message.Content}
 					case "task_complete", "turn_done":
 						turnDone <- "completed"
+					}
+
+				// v2 notifications
+				case "thread/started":
+					if tid := extractThreadIDFromNotification(params); tid != "" {
+						threadReady <- tid
+					}
+
+				case "agent_message/delta":
+					var ev struct {
+						Delta string `json:"delta"`
+					}
+					if json.Unmarshal(params, &ev) == nil && ev.Delta != "" {
+						output.WriteString(ev.Delta)
+						msgCh <- Message{Type: "text", Text: ev.Delta}
 					}
 
 				case "turn/completed":
@@ -186,6 +216,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						turnDone <- "completed"
 					}
 
+				// v1 fallbacks
 				case "item/agent_message":
 					var ev struct {
 						Item struct {
@@ -202,7 +233,30 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					msgCh <- Message{Type: "tool_use", ToolName: "exec_command"}
 
 				case "error":
-					msgCh <- Message{Type: "error", Text: fmt.Sprintf("%v", params)}
+					var ev struct {
+						Error struct {
+							Message string `json:"message"`
+						} `json:"error"`
+					}
+					msg := string(params)
+					if json.Unmarshal(params, &ev) == nil && ev.Error.Message != "" {
+						msg = ev.Error.Message
+					}
+					msgCh <- Message{Type: "error", Text: msg}
+
+				// Ignored system notifications
+				case "configWarning", "deprecationNotice", "warning",
+					"remoteControl/status/changed",
+					"item/started", "item/completed",
+					"turn/started", "turn/plan/updated",
+					"plan/delta", "reasoning_summary/text_delta",
+					"command_exec/output_delta", "file_change/output_delta",
+					"process/output_delta", "process/exited",
+					"thread/token_usage/updated":
+					// silently ignore
+
+				default:
+					log.Printf("[codex] unknown notification: %s params=%s", method, string(params))
 				}
 			})
 		}
@@ -213,9 +267,12 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	errMsg := ""
 
 	// 1. Initialize
+	log.Printf("[codex] sending initialize RPC...")
 	_, err := rpc.request(ctx, "initialize", map[string]any{
 		"protocolVersion": "1.0",
-		"capabilities":    map[string]any{},
+		"capabilities": map[string]any{
+			"experimentalApi": true,
+		},
 		"clientInfo": map[string]string{
 			"name":    "devrelay",
 			"version": "1.0.0",
@@ -226,38 +283,46 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		goto done
 	}
 	rpc.notify("initialized", nil)
+	log.Printf("[codex] initialize OK")
 
 	// 2. Thread start or resume
+	log.Printf("[codex] starting thread (resume=%v)...", opts.ResumeSessionID != "")
 	if opts.ResumeSessionID != "" {
 		resp, resumeErr := rpc.request(ctx, "thread/resume", map[string]any{
-			"thread_id": opts.ResumeSessionID,
+			"threadId": opts.ResumeSessionID,
 		})
 		if resumeErr == nil {
-			sessionID = extractCodexThreadID(resp)
+			sessionID = extractThreadIDFromNotification(resp)
 		}
 	}
+
 	if sessionID == "" {
-		resp, err := rpc.request(ctx, "thread/start", map[string]any{
-			"cwd":                    opts.Cwd,
-			"persistExtendedHistory": true,
+		_, err := rpc.request(ctx, "thread/start", map[string]any{
+			"cwd": opts.Cwd,
 		})
 		if err != nil {
 			errMsg = fmt.Sprintf("thread/start: %v", err)
 			goto done
 		}
-		sessionID = extractCodexThreadID(resp)
+		// v2: thread/start response is minimal; thread ID arrives via thread/started notification
+		select {
+		case tid := <-threadReady:
+			sessionID = tid
+		case <-ctx.Done():
+			errMsg = "timeout waiting for thread/started"
+			goto done
+		}
 	}
+	log.Printf("[codex] thread ready (id=%s)", sessionID)
 
 	// 3. Turn start
+	log.Printf("[codex] starting turn...")
 	_, err = rpc.request(ctx, "turn/start", map[string]any{
-		"thread_id": sessionID,
-		"input": map[string]any{
-			"type": "user_message",
-			"message": map[string]any{
-				"role": "user",
-				"content": []map[string]any{
-					{"type": "input_text", "text": prompt},
-				},
+		"threadId": sessionID,
+		"input": []map[string]any{
+			{
+				"type": "text",
+				"text": prompt,
 			},
 		},
 	})
@@ -265,6 +330,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		errMsg = fmt.Sprintf("turn/start: %v", err)
 		goto done
 	}
+	log.Printf("[codex] turn started, waiting for completion...")
 
 	// 4. Wait for completion
 	select {
