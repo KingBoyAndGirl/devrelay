@@ -189,7 +189,8 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						threadReady <- tid
 					}
 
-				case "agent_message/delta":
+				// v2 delta streaming (both naming conventions)
+				case "agent_message/delta", "item/agentMessage/delta":
 					var ev struct {
 						Delta string `json:"delta"`
 					}
@@ -252,7 +253,8 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					"plan/delta", "reasoning_summary/text_delta",
 					"command_exec/output_delta", "file_change/output_delta",
 					"process/output_delta", "process/exited",
-					"thread/token_usage/updated":
+					"thread/token_usage/updated", "thread/tokenUsage/updated",
+					"account/rateLimits/updated":
 					// silently ignore
 
 				default:
