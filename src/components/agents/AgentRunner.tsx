@@ -10,6 +10,7 @@ interface ParsedChunk {
   content: string;
   toolName?: string;
   toolInput?: string;
+  sessionId?: string;
 }
 
 interface Turn {
@@ -23,6 +24,8 @@ interface Turn {
   startedAt: number;
   endedAt: number | null;
   postActions: PostAction[];
+  cliSessionId?: string;
+  resumedFrom?: string;
 }
 
 interface PostAction {
@@ -135,7 +138,7 @@ function parseLine(line: string, cliType?: string): ParsedChunk | null {
     }
 
     if (type === 'result') {
-      return { ts, type: 'result', content: obj.subtype || 'finished' };
+      return { ts, type: 'result', content: obj.subtype || 'finished', sessionId: obj.session_id };
     }
 
     return null;
@@ -228,6 +231,9 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
     setPrompt('');
     if (taskContext && !contextUsed) setContextUsed(true);
 
+    const lastSessionTurn = [...turns].reverse().find(t => t.cliSessionId);
+    const resumeSessionId = lastSessionTurn?.cliSessionId;
+
     const turn: Turn = {
       id: Math.random().toString(36).slice(2, 8),
       prompt: text,
@@ -238,11 +244,13 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
       startedAt: Date.now(),
       endedAt: null,
       postActions: [],
+      resumedFrom: resumeSessionId,
     };
 
     const reqBody: Record<string, unknown> = { prompt: text };
     if (projectId) reqBody.projectId = projectId;
     if (taskId) reqBody.taskId = taskId;
+    if (resumeSessionId) reqBody.sessionId = resumeSessionId;
 
     setActiveTurn(turn);
     userScrolledUp.current = false;
@@ -335,6 +343,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
                 const parsed = parseLine(rawLine);
                 if (!parsed) continue;
                 if (parsed.type === 'result' && parsed.content === 'success') streamResult = 'success';
+                if (parsed.sessionId) turn.cliSessionId = parsed.sessionId;
                 if (parsed.type === 'raw' || parsed.type === 'text') {
                   const text = parsed.content.trim();
                   // Skip echoed user prompt and duplicates
@@ -509,6 +518,9 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
                     )}
                     {turn.exitCode !== null && turn.exitCode !== 0 && (
                       <span className="text-xs text-red-400">退出码 {turn.exitCode}</span>
+                    )}
+                    {turn.resumedFrom && (
+                      <span className="text-xs text-purple-500 font-medium">会话恢复</span>
                     )}
                   </div>
 

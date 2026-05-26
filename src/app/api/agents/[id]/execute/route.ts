@@ -76,6 +76,7 @@ export async function POST(
   const stream = body.stream !== false;
   const projectId = body.projectId as string | undefined;
   const taskId = body.taskId as string | undefined;
+  const sessionId = body.sessionId as string | undefined;
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
     return NextResponse.json({ error: 'prompt is required' }, { status: 400 });
@@ -84,7 +85,7 @@ export async function POST(
   // Try sidecar first for better process management
   const wsToken = await getWorkspaceToken(agent.workspaceId);
   if (await sidecarAvailable(wsToken)) {
-    return proxyToSidecar(agent, prompt, stream, projectId, taskId, wsToken);
+    return proxyToSidecar(agent, prompt, stream, projectId, taskId, wsToken, sessionId);
   }
 
   // Fallback to direct spawn
@@ -141,7 +142,8 @@ async function proxyToSidecar(
   stream: boolean,
   projectId: string | undefined,
   taskId: string | undefined,
-  wsToken?: string
+  wsToken?: string,
+  sessionId?: string
 ): Promise<NextResponse> {
   // If auto-PR is needed, fall back to direct spawn which handles post-execution
   if (projectId && taskId) {
@@ -167,7 +169,7 @@ async function proxyToSidecar(
   const res = await fetch(`${SIDECAR_URL}/execute`, {
     method: 'POST',
     headers: sidecarHeaders(wsToken),
-    body: JSON.stringify({ cli, prompt, envVars: agentEnvVars }),
+    body: JSON.stringify({ cli, prompt, envVars: agentEnvVars, ...(sessionId ? { sessionId } : {}) }),
   });
 
   if (res.status === 429) {

@@ -491,11 +491,17 @@ function startServer(flags: Record<string, string> = {}) {
 
   // ── Build CLI Args ───────────────────────────────────────────
 
-  function buildArgs(cli: string, prompt: string): string[] {
+  function buildArgs(cli: string, prompt: string, sessionId?: string): string[] {
     switch (cli) {
-      case 'claude':  return ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
+      case 'claude':
+        return sessionId
+          ? ['-p', prompt, '--resume', sessionId, '--output-format', 'stream-json', '--verbose']
+          : ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
       case 'codex':   return ['exec', prompt];
-      case 'hermes':  return ['-z', prompt, 'chat'];
+      case 'hermes':
+        return sessionId
+          ? ['-z', prompt, '--resume', sessionId, 'chat']
+          : ['-z', prompt, 'chat'];
       default:        return [prompt];
     }
   }
@@ -504,14 +510,14 @@ function startServer(flags: Record<string, string> = {}) {
 
   async function handleExecute(req: IncomingMessage, res: ServerResponse) {
     const body = await readBody(req);
-    let parsed: { cli?: string; prompt?: string; envVars?: Record<string, string> };
+    let parsed: { cli?: string; prompt?: string; envVars?: Record<string, string>; sessionId?: string };
     try { parsed = JSON.parse(body); } catch {
       res.writeHead(400);
       res.end(JSON.stringify({ error: 'invalid JSON' }));
       return;
     }
 
-    const { cli = 'claude', prompt, envVars } = parsed;
+    const { cli = 'claude', prompt, envVars, sessionId } = parsed;
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       res.writeHead(400);
       res.end(JSON.stringify({ error: 'prompt is required' }));
@@ -527,7 +533,7 @@ function startServer(flags: Record<string, string> = {}) {
       return;
     }
 
-    const args = buildArgs(cli, prompt);
+    const args = buildArgs(cli, prompt, sessionId);
     const execId = randomBytes(8).toString('hex');
 
     sseHeaders(res);
