@@ -353,10 +353,6 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	}
 
 done:
-	// Gracefully stop the thread to prevent turn_aborted on resume
-	if sessionID != "" {
-		rpc.notify("thread/stop", map[string]any{"threadId": sessionID})
-	}
 	stdin.Close()
 	<-stdoutDone
 	cmd.Wait()

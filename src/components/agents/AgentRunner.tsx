@@ -97,6 +97,10 @@ function parseLine(line: string, cliType?: string): ParsedChunk | null {
   // Try to parse as JSON (Claude Code stream-json format)
   try {
     const obj = JSON.parse(trimmed);
+    // Ignore JSON primitives (numbers, strings, booleans) — only process objects
+    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+      return { ts: Date.now(), type: 'raw', content: line };
+    }
     const ts = Date.now();
     const type = obj.type;
     const sessionId = obj.session_id;
