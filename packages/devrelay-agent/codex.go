@@ -146,6 +146,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	threadReady := make(chan string, 1) // v2: thread/started delivers thread ID via notification
 	var output strings.Builder
 	var sessionID string
+	var turnInProgress bool
 
 	// Stderr reader goroutine
 	stderrCh := make(chan string, 1)
@@ -217,9 +218,9 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						} `json:"status"`
 					}
 					json.Unmarshal(params, &ev)
-					if ev.Status.Type == "idle" {
+					if turnInProgress && ev.Status.Type == "idle" {
 						turnDone <- "completed"
-					} else if ev.Status.Type == "systemError" || ev.Status.Type == "failed" {
+					} else if turnInProgress && (ev.Status.Type == "systemError" || ev.Status.Type == "failed") {
 						turnDone <- "failed"
 					}
 
@@ -339,11 +340,13 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			errMsg = fmt.Sprintf("turn/start: %v", err)
 			goto done
 		}
+		turnInProgress = true
 		log.Printf("[codex] turn started, waiting for completion...")
 
 		// 4. Wait for completion
 		select {
 		case status := <-turnDone:
+			turnInProgress = false
 			if status == "completed" || status == "" {
 				finalStatus = "completed"
 			} else if status == "cancelled" || status == "canceled" || status == "aborted" || status == "interrupted" {
