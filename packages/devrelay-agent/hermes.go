@@ -59,6 +59,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}, 2)
 	var output strings.Builder
 	var sessionID string
+	var promptInProgress bool
 	resumeRequested := opts.ResumeSessionID
 
 	// Stderr reader
@@ -112,10 +113,12 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 							msgCh <- Message{Type: "tool_result", Text: string(ev.Update.Result)}
 						}
 					case "turn_end":
-						promptDone <- struct {
-							status string
-							err    string
-						}{status: "completed", err: ""}
+						if promptInProgress {
+							promptDone <- struct {
+								status string
+								err    string
+							}{status: "completed", err: ""}
+						}
 					}
 
 				case "session/notification":
@@ -126,10 +129,12 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					}
 					json.Unmarshal(params, &ev)
 					if ev.Notification.Type == "turn_end" {
-						promptDone <- struct {
-							status string
-							err    string
-						}{status: "completed", err: ""}
+						if promptInProgress {
+							promptDone <- struct {
+								status string
+								err    string
+							}{status: "completed", err: ""}
+						}
 					}
 
 				case "session/request_permission":
@@ -205,10 +210,12 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		errMsg = fmt.Sprintf("session/prompt: %v", err)
 		goto done
 	}
+	promptInProgress = true
 
 	// 5. Wait for completion
 	select {
 	case result := <-promptDone:
+		promptInProgress = false
 		if result.status == "completed" {
 			finalStatus = "completed"
 		} else {
