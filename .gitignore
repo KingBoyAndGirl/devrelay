@@ -36,3 +36,6 @@ npm-debug.log*
 
 # build
 tsconfig.tsbuildinfo
+
+# go binary
+packages/devrelay-agent/devrelay
