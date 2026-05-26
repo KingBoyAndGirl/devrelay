@@ -198,14 +198,17 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						output.WriteString(ev.Delta)
 					}
 
-				case "turn/completed":
+				case "turn/completed", "turn/aborted":
 					var ev struct {
 						Turn struct {
 							Status string `json:"status"`
 						} `json:"turn"`
 					}
-					json.Unmarshal(params, &ev)
-					turnDone <- ev.Turn.Status
+					if json.Unmarshal(params, &ev) == nil && ev.Turn.Status != "" {
+						turnDone <- ev.Turn.Status
+					} else {
+						turnDone <- "aborted"
+					}
 
 				case "thread/status/changed":
 					var ev struct {
@@ -290,7 +293,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	rpc.notify("initialized", nil)
 	log.Printf("[codex] initialize OK")
 
-	// 2. Thread start or resume
+	// 2. Thread start or resume, with retry on abort
 	log.Printf("[codex] starting thread (resume=%v)...", opts.ResumeSessionID != "")
 	if opts.ResumeSessionID != "" {
 		resp, resumeErr := rpc.request(ctx, "thread/resume", map[string]any{
@@ -301,55 +304,65 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		}
 	}
 
-	if sessionID == "" {
-		_, err := rpc.request(ctx, "thread/start", map[string]any{
-			"cwd": opts.Cwd,
+	// Retry loop: if turn is aborted on a resumed thread, retry with a fresh thread
+	for attempt := 0; ; attempt++ {
+		if sessionID == "" {
+			_, err := rpc.request(ctx, "thread/start", map[string]any{
+				"cwd": opts.Cwd,
+			})
+			if err != nil {
+				errMsg = fmt.Sprintf("thread/start: %v", err)
+				goto done
+			}
+			select {
+			case tid := <-threadReady:
+				sessionID = tid
+			case <-ctx.Done():
+				errMsg = "timeout waiting for thread/started"
+				goto done
+			}
+		}
+		log.Printf("[codex] thread ready (id=%s)", sessionID)
+
+		// 3. Turn start
+		log.Printf("[codex] starting turn...")
+		_, err = rpc.request(ctx, "turn/start", map[string]any{
+			"threadId": sessionID,
+			"input": []map[string]any{
+				{
+					"type": "text",
+					"text": prompt,
+				},
+			},
 		})
 		if err != nil {
-			errMsg = fmt.Sprintf("thread/start: %v", err)
+			errMsg = fmt.Sprintf("turn/start: %v", err)
 			goto done
 		}
-		// v2: thread/start response is minimal; thread ID arrives via thread/started notification
+		log.Printf("[codex] turn started, waiting for completion...")
+
+		// 4. Wait for completion
 		select {
-		case tid := <-threadReady:
-			sessionID = tid
+		case status := <-turnDone:
+			if status == "completed" || status == "" {
+				finalStatus = "completed"
+			} else if status == "cancelled" || status == "canceled" || status == "aborted" || status == "interrupted" {
+				// If turn was aborted and we used resume, retry with fresh thread
+				if status == "aborted" && attempt == 0 && opts.ResumeSessionID != "" && sessionID == opts.ResumeSessionID {
+					log.Printf("[codex] turn aborted on resumed thread, retrying with fresh thread")
+					sessionID = ""
+					output.Reset()
+					continue
+				}
+				finalStatus = "aborted"
+			} else {
+				finalStatus = "failed"
+				errMsg = status
+			}
 		case <-ctx.Done():
-			errMsg = "timeout waiting for thread/started"
-			goto done
+			finalStatus = "timeout"
 		}
-	}
-	log.Printf("[codex] thread ready (id=%s)", sessionID)
-
-	// 3. Turn start
-	log.Printf("[codex] starting turn...")
-	_, err = rpc.request(ctx, "turn/start", map[string]any{
-		"threadId": sessionID,
-		"input": []map[string]any{
-			{
-				"type": "text",
-				"text": prompt,
-			},
-		},
-	})
-	if err != nil {
-		errMsg = fmt.Sprintf("turn/start: %v", err)
-		goto done
-	}
-	log.Printf("[codex] turn started, waiting for completion...")
-
-	// 4. Wait for completion
-	select {
-	case status := <-turnDone:
-		if status == "completed" || status == "" {
-			finalStatus = "completed"
-		} else if status == "cancelled" || status == "canceled" || status == "aborted" || status == "interrupted" {
-			finalStatus = "aborted"
-		} else {
-			finalStatus = "failed"
-			errMsg = status
-		}
-	case <-ctx.Done():
-		finalStatus = "timeout"
+		break
 	}
 
 done:
