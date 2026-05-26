@@ -38,7 +38,7 @@ export const AGENT_TYPES: Record<AgentType, {
   hermes: {
     name: 'Hermes',
     defaultPath: 'hermes',
-    defaultArgs: '--prompt "{prompt}"',
+    defaultArgs: '-z "{prompt}" chat',
     defaultTimeoutMs: 600_000,
     defaultEnvKeys: ['HERMES_BASE_URL', 'HERMES_API_KEY'],
   },

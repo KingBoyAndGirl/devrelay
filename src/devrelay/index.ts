@@ -495,7 +495,7 @@ function startServer(flags: Record<string, string> = {}) {
     switch (cli) {
       case 'claude':  return ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
       case 'codex':   return ['exec', prompt];
-      case 'hermes':  return ['--prompt', prompt];
+      case 'hermes':  return ['-z', prompt, 'chat'];
       default:        return [prompt];
     }
   }
