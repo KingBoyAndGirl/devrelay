@@ -209,11 +209,15 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 
 				case "thread/status/changed":
 					var ev struct {
-						Status string `json:"status"`
+						Status struct {
+							Type string `json:"type"`
+						} `json:"status"`
 					}
 					json.Unmarshal(params, &ev)
-					if ev.Status == "idle" {
+					if ev.Status.Type == "idle" {
 						turnDone <- "completed"
+					} else if ev.Status.Type == "systemError" || ev.Status.Type == "failed" {
+						turnDone <- "failed"
 					}
 
 				// v1 fallbacks
@@ -253,7 +257,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					"command_exec/output_delta", "file_change/output_delta",
 					"process/output_delta", "process/exited",
 					"thread/token_usage/updated", "thread/tokenUsage/updated",
-					"account/rateLimits/updated":
+					"account/rateLimits/updated", "thread/goal/cleared":
 					// silently ignore
 
 				default:
