@@ -264,6 +264,10 @@ func (s *server) handleExecute(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case result := <-resCh:
+			// Flush accumulated output (e.g. Codex deltas) before exit
+			if result.Output != "" {
+				sse.write(map[string]any{"type": "stdout", "data": result.Output})
+			}
 			sse.write(map[string]any{
 				"type":      "exit",
 				"exitCode":  result.ExitCode,

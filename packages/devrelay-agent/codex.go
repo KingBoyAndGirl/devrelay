@@ -196,7 +196,6 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					}
 					if json.Unmarshal(params, &ev) == nil && ev.Delta != "" {
 						output.WriteString(ev.Delta)
-						msgCh <- Message{Type: "text", Text: ev.Delta}
 					}
 
 				case "turn/completed":
@@ -362,6 +361,11 @@ done:
 	// Retry logic: if resume was attempted but failed with no new session, clear session
 	if opts.ResumeSessionID != "" && finalStatus == "failed" && sessionID == "" {
 		sessionID = "" // Signal to caller that resume didn't land
+	}
+
+	// Flush accumulated output as a single message before exit
+	if output.Len() > 0 {
+		msgCh <- Message{Type: "text", Text: output.String()}
 	}
 
 	resCh <- Result{
