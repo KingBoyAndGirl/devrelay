@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { agents, activities, projectRepos } from '@/lib/db/schema';
+import { agents, activities, projectRepos, workspaces } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { buildSpawnConfig, runAgentStream, classifyStderr, defaultLimiter } from '@/lib/agents/spawn';
@@ -10,23 +10,43 @@ import { runAutoPR } from '@/lib/git/auto-pr';
 import { createId } from '@paralleldrive/cuid2';
 
 const SIDECAR_URL = config.agents.sidecarUrl;
-const SIDECAR_TOKEN = config.agents.agentToken;
+const SIDECAR_TOKEN_ENV = config.agents.agentToken;
 
-function sidecarHeaders(): Record<string, string> {
+function sidecarHeaders(workspaceToken?: string): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (SIDECAR_TOKEN) headers['Authorization'] = `Bearer ${SIDECAR_TOKEN}`;
+  const token = SIDECAR_TOKEN_ENV || workspaceToken;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }
 
-async function sidecarAvailable(): Promise<boolean> {
+async function sidecarAvailable(token?: string): Promise<boolean> {
   try {
     const res = await fetch(`${SIDECAR_URL}/health`, {
       signal: AbortSignal.timeout(2000),
-      headers: SIDECAR_TOKEN ? { Authorization: `Bearer ${SIDECAR_TOKEN}` } : {},
+      headers: (SIDECAR_TOKEN_ENV || token) ? { Authorization: `Bearer ${SIDECAR_TOKEN_ENV || token}` } : {},
     });
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+async function getWorkspaceToken(workspaceId: string): Promise<string | undefined> {
+  try {
+    const ws = await db.query.workspaces.findFirst({
+      where: eq(workspaces.id, workspaceId),
+      columns: { settings: true },
+    });
+    if (!ws?.settings) return undefined;
+    const settings = JSON.parse(ws.settings);
+    const tokens: any[] = settings.agentTokens || [];
+    // Use the most recently seen token
+    const sorted = tokens
+      .filter((t: any) => t.lastSeenAt)
+      .sort((a: any, b: any) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
+    return sorted[0]?.token;
+  } catch {
+    return undefined;
   }
 }
 
@@ -62,8 +82,9 @@ export async function POST(
   }
 
   // Try sidecar first for better process management
-  if (await sidecarAvailable()) {
-    return proxyToSidecar(agent, prompt, stream, projectId, taskId);
+  const wsToken = await getWorkspaceToken(agent.workspaceId);
+  if (await sidecarAvailable(wsToken)) {
+    return proxyToSidecar(agent, prompt, stream, projectId, taskId, wsToken);
   }
 
   // Fallback to direct spawn
@@ -118,8 +139,9 @@ async function proxyToSidecar(
   agent: { type: string; execPath: string | null; argsTemplate: string | null; envVars: string | null; name: string; gitName: string | null; gitEmail: string | null },
   prompt: string,
   stream: boolean,
-  projectId?: string,
-  taskId?: string
+  projectId: string | undefined,
+  taskId: string | undefined,
+  wsToken?: string
 ): Promise<NextResponse> {
   // If auto-PR is needed, fall back to direct spawn which handles post-execution
   if (projectId && taskId) {
@@ -127,11 +149,25 @@ async function proxyToSidecar(
   }
 
   const cli = agent.execPath || mapTypeToCLI(agent.type);
+  let agentEnvVars: Record<string, string> = {};
+  if (agent.envVars) {
+    try { agentEnvVars = JSON.parse(agent.envVars); } catch {}
+  }
+
+  // Merge agent.config into env vars
+  let agentConfig: Record<string, string> = {};
+  if ((agent as any).config) {
+    try {
+      const cfg = JSON.parse((agent as any).config);
+      if (cfg.base_url) agentEnvVars['PROVIDER_BASE_URL'] = cfg.base_url;
+      if (cfg.env_key) agentEnvVars['PROVIDER_ENV_KEY'] = cfg.env_key;
+    } catch {}
+  }
 
   const res = await fetch(`${SIDECAR_URL}/execute`, {
     method: 'POST',
-    headers: sidecarHeaders(),
-    body: JSON.stringify({ cli, prompt }),
+    headers: sidecarHeaders(wsToken),
+    body: JSON.stringify({ cli, prompt, envVars: agentEnvVars }),
   });
 
   if (res.status === 429) {

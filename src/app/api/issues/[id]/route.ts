@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { issues, stages, agents } from '@/lib/db/schema';
+import { issues, stages, agents, pullRequests } from '@/lib/db/schema';
 import { eq, inArray } from 'drizzle-orm';
 
 export async function GET(
@@ -26,6 +26,8 @@ export async function GET(
   const stageList = issue.stages ?? [];
   const sortedStages = [...stageList].sort((a: { step: number }, b: { step: number }) => a.step - b.step);
 
+  const stageIds = [...stageList].map((s: { id: string }) => s.id);
+
   // Resolve assigned agent names
   const assignedSet = new Set<string>();
   for (const s of sortedStages) { if (s.assignedTo) assignedSet.add(s.assignedTo); }
@@ -38,9 +40,24 @@ export async function GET(
     : [];
   const agentMap = new Map(agentList.map(a => [a.id, a]));
 
+  // Resolve linked PRs
+  const prList = stageIds.length > 0
+    ? await db.query.pullRequests.findMany({
+        where: inArray(pullRequests.devrelayStageId, stageIds as string[]),
+      })
+    : [];
+  const prsByStage = new Map<string, typeof prList>();
+  for (const pr of prList) {
+    const sid = pr.devrelayStageId;
+    if (!sid) continue;
+    if (!prsByStage.has(sid)) prsByStage.set(sid, []);
+    prsByStage.get(sid)!.push(pr);
+  }
+
   const stagesWithInfo = sortedStages.map(s => ({
     ...s,
     assignedAgentName: s.assignedTo ? (agentMap.get(s.assignedTo)?.name || null) : null,
+    linkedPRs: prsByStage.get(s.id) || [],
   }));
 
   // Progress

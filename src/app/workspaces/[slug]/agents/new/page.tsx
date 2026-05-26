@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { AGENT_TYPES } from '@/lib/agents';
 import { ROLE_LABELS } from '@/types';
 import PermissionSelector from '@/components/agents/PermissionSelector';
+import { getEnvKeyLabel, getEnvKeyPlaceholder, isApiKeyField } from '@/lib/agents';
 import type { Role } from '@/lib/permissions';
 
 interface DiscoveredCLI {
@@ -66,10 +67,17 @@ export default function NewAgentPage() {
   const [role, setRole] = useState('developer');
   const [execPath, setExecPath] = useState('');
   const [argsTemplate, setArgsTemplate] = useState('');
-  const [envVars, setEnvVars] = useState('');
+  const getDefaultEnvEntries = (t: string) => {
+    const keys = AGENT_TYPES[t as keyof typeof AGENT_TYPES]?.defaultEnvKeys || ['PROVIDER_BASE_URL', 'ANTHROPIC_API_KEY'];
+    return keys.map(k => ({key: k, value: ''}));
+  };
+
+  const [envVarEntries, setEnvVarEntries] = useState<{key: string; value: string}[]>(getDefaultEnvEntries(type));
+  const [visibleValues, setVisibleValues] = useState<Set<number>>(new Set());
   const [gitName, setGitName] = useState('');
   const [gitEmail, setGitEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const [discovered, setDiscovered] = useState<DiscoveredCLI[]>([]);
   const [discoverLoading, setDiscoverLoading] = useState(true);
@@ -86,16 +94,39 @@ export default function NewAgentPage() {
     if (!info) return;
     setExecPath(info.defaultPath);
     setArgsTemplate(info.defaultArgs);
+    setEnvVarEntries(info.defaultEnvKeys.map(k => ({key: k, value: ''})));
+    setVisibleValues(new Set());
   }, [type]);
 
-  function handleTypeChange(newType: string) {
-    setType(newType);
+  function addEnvVarEntry() {
+    setEnvVarEntries(prev => [...prev, {key: '', value: ''}]);
+  }
+
+  function removeEnvVarEntry(index: number) {
+    setEnvVarEntries(prev => prev.filter((_, i) => i !== index));
+  }
+
+  function updateEnvVarKey(index: number, key: string) {
+    setEnvVarEntries(prev => prev.map((e, i) => i === index ? {...e, key} : e));
+  }
+
+  function updateEnvVarValue(index: number, value: string) {
+    setEnvVarEntries(prev => prev.map((e, i) => i === index ? {...e, value} : e));
+  }
+
+  function buildEnvVarsJson(): string | null {
+    const obj: Record<string, string> = {};
+    for (const e of envVarEntries) {
+      if (e.key.trim()) obj[e.key.trim()] = e.value;
+    }
+    const keys = Object.keys(obj);
+    return keys.length > 0 ? JSON.stringify(obj) : null;
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError('');
     setLoading(true);
-
 
     const res = await fetch(`/api/workspaces/${slug}/agents`, {
       method: 'POST',
@@ -106,7 +137,7 @@ export default function NewAgentPage() {
         role,
         execPath: execPath || null,
         argsTemplate: argsTemplate || null,
-        envVars: envVars || null,
+        envVars: buildEnvVarsJson(),
         gitName: gitName || null,
         gitEmail: gitEmail || null,
       }),
@@ -171,7 +202,7 @@ export default function NewAgentPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Agent 类型</label>
               <select
                 value={type}
-                onChange={(e) => handleTypeChange(e.target.value)}
+                onChange={(e) => setType(e.target.value)}
                 className="input"
               >
                 {TYPE_OPTIONS.map(opt => (
@@ -274,16 +305,87 @@ export default function NewAgentPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">环境变量（JSON）</label>
-            <textarea
-              value={envVars}
-              onChange={(e) => setEnvVars(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-              rows={4}
-              placeholder='{"ANTHROPIC_API_KEY": "sk-..."}'
-            />
-            <p className="text-xs text-gray-400 mt-1">API Key 等敏感信息通过环境变量传递</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">环境变量</label>
+            <p className="text-xs text-gray-400 mb-2">配置 Agent 运行时需要的环境变量（API Key 等）</p>
+            <div className="space-y-3">
+              {envVarEntries.map((entry, i) => {
+                const metaLabel = getEnvKeyLabel(entry.key);
+                const metaPlaceholder = getEnvKeyPlaceholder(entry.key);
+                const isKey = isApiKeyField(entry.key);
+                const isShown = visibleValues.has(i);
+                // Sort: URL entries first
+                const isUrl = entry.key.includes('URL') || entry.key.includes('BASE_URL');
+                return { entry, i, metaLabel, metaPlaceholder, isKey, isShown, isUrl };
+              }).sort((a, b) => {
+                if (a.isUrl && !b.isUrl) return -1;
+                if (!a.isUrl && b.isUrl) return 1;
+                return 0;
+              }).map(({ entry, i, metaLabel, metaPlaceholder, isKey, isShown, isUrl }) => (
+                  <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white">
+                    <div className="flex items-center gap-2 mb-2">
+                      {metaLabel ? (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-100 text-blue-700">{metaLabel}</span>
+                      ) : (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-200 text-gray-500">{entry.key || '自定义'}</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        value={entry.key}
+                        onChange={(e) => updateEnvVarKey(i, e.target.value)}
+                        className="w-48 px-2 py-2 border border-gray-200 rounded text-xs font-mono bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="环境变量名"
+                      />
+                      <div className="flex-1 relative">
+                        <input
+                          type={isKey && !isShown ? 'password' : 'text'}
+                          value={entry.value}
+                          onChange={(e) => updateEnvVarValue(i, e.target.value)}
+                          className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                          placeholder={metaPlaceholder || '变量值'}
+                        />
+                        {isKey && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = new Set(visibleValues);
+                              if (next.has(i)) next.delete(i); else next.add(i);
+                              setVisibleValues(next);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                            title={isShown ? '隐藏' : '显示'}
+                          >
+                            {isShown ? (
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                            ) : (
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeEnvVarEntry(i)}
+                        className="shrink-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                        title="移除"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <button
+              type="button"
+              onClick={addEnvVarEntry}
+              className="mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              + 添加环境变量
+            </button>
           </div>
+
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>}
 
           <div className="flex gap-3">
             <button

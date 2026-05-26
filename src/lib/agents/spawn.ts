@@ -15,6 +15,7 @@ export function buildSpawnConfig(agent: {
   execPath: string | null;
   argsTemplate: string | null;
   envVars: string | null;
+  config?: string | null;
 }): AgentSpawnConfig {
   const typeInfo = AGENT_TYPES[agent.type as AgentType] || AGENT_TYPES.custom;
 
@@ -22,6 +23,15 @@ export function buildSpawnConfig(agent: {
   if (agent.envVars) {
     try {
       Object.assign(envVars, JSON.parse(agent.envVars));
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Merge agent.config (base_url, env_key) into env vars
+  if (agent.config) {
+    try {
+      const cfg = JSON.parse(agent.config);
+      if (cfg.base_url) envVars['PROVIDER_BASE_URL'] = cfg.base_url;
+      if (cfg.env_key) envVars['PROVIDER_ENV_KEY'] = cfg.env_key;
     } catch { /* ignore parse errors */ }
   }
 
@@ -57,6 +67,7 @@ export async function* runAgentStream(
     cwd: config.cwd || process.cwd(),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  child.stdin!.end();  // close stdin so CLI doesn't block waiting for input
 
   let totalOutput = 0;
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -143,7 +154,7 @@ export function runAgent(
     env: { ...process.env, ...config.envVars },
     cwd: config.cwd || process.cwd(),
     stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  }).on('spawn', function(this: ChildProcess) { this.stdin!.end(); });
 }
 
 // ── Concurrency limiter ──────────────────────────────────────────

@@ -504,14 +504,14 @@ function startServer(flags: Record<string, string> = {}) {
 
   async function handleExecute(req: IncomingMessage, res: ServerResponse) {
     const body = await readBody(req);
-    let parsed: { cli?: string; prompt?: string };
+    let parsed: { cli?: string; prompt?: string; envVars?: Record<string, string> };
     try { parsed = JSON.parse(body); } catch {
       res.writeHead(400);
       res.end(JSON.stringify({ error: 'invalid JSON' }));
       return;
     }
 
-    const { cli = 'claude', prompt } = parsed;
+    const { cli = 'claude', prompt, envVars } = parsed;
     if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       res.writeHead(400);
       res.end(JSON.stringify({ error: 'prompt is required' }));
@@ -535,9 +535,10 @@ function startServer(flags: Record<string, string> = {}) {
     await acquireSlot();
 
     const child = spawn(cli, args, {
-      env: { ...process.env },
+      env: { ...process.env, ...(envVars as Record<string, string> || {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    child.stdin!.end();  // close stdin so CLI doesn't block waiting for input
 
     let totalOutput = 0;
     let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
@@ -756,6 +757,7 @@ function startServer(flags: Record<string, string> = {}) {
         cwd: cwd || process.cwd(),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
+      child.stdin!.end();
       const chunks: string[] = [];
       let totalOutput = 0;
       const timeout = setTimeout(() => {

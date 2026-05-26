@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import AgentRunner from '@/components/agents/AgentRunner';
 import { ROLE_LABELS, STAGE_NAMES } from '@/types';
-import { AGENT_TYPES } from '@/lib/agents';
+import { AGENT_TYPES, getEnvKeyLabel, getEnvKeyPlaceholder, isApiKeyField } from '@/lib/agents';
 import { DetailSkeleton } from '@/components/ui/SkeletonLoader';
 import PermissionSelector from '@/components/agents/PermissionSelector';
 import { getDefaultPermissions, PERMISSIONS, ROLE_BADGES, type Role } from '@/lib/permissions';
@@ -48,6 +48,8 @@ interface AgentDetail {
   role: string;
   execPath: string | null;
   argsTemplate: string | null;
+  envVars: string | null;
+  config: string | null;
   enabled: boolean;
   gitName: string | null;
   gitEmail: string | null;
@@ -96,14 +98,17 @@ export default function AgentDetailPage() {
   const [projectAssignments, setProjectAssignments] = useState<Array<{ id: string; name: string; status: string; assigned: boolean }>>([]);
   const [savingProjects, setSavingProjects] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [editType, setEditType] = useState('');
   const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState('');
   const [editExecPath, setEditExecPath] = useState('');
   const [editArgsTemplate, setEditArgsTemplate] = useState('');
-  const [editEnvVars, setEditEnvVars] = useState('');
+  const [editEnvVarEntries, setEditEnvVarEntries] = useState<{key: string; value: string}[]>([]);
+  const [visibleValues, setVisibleValues] = useState<Set<number>>(new Set());
   const [editGitName, setEditGitName] = useState('');
   const [editGitEmail, setEditGitEmail] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     fetch(`/api/workspaces/${slug}/agents/${agentId}`)
@@ -131,20 +136,65 @@ export default function AgentDetailPage() {
 
   function startEditing() {
     if (!agent) return;
+    setError('');
+    setEditType(agent.type);
     setEditName(agent.name);
     setEditRole(agent.role);
     setEditExecPath(agent.execPath || '');
     setEditArgsTemplate(agent.argsTemplate || '');
-    setEditEnvVars('');
+    const entries: {key: string; value: string}[] = [];
+    if (agent.envVars) {
+      try {
+        const vars = JSON.parse(agent.envVars);
+        for (const [k, v] of Object.entries(vars)) {
+          entries.push({key: k, value: String(v)});
+        }
+      } catch {}
+    }
+    // Always merge defaults so URL / API Key fields are always visible
+    const defaults = AGENT_TYPES[agent.type as keyof typeof AGENT_TYPES]?.defaultEnvKeys || ['ANTHROPIC_BASE_URL', 'ANTHROPIC_API_KEY'];
+    for (const k of defaults) {
+      if (!entries.some(e => e.key === k)) {
+        entries.push({key: k, value: ''});
+      }
+    }
+    setEditEnvVarEntries(entries);
+    setVisibleValues(new Set());
     setEditGitName(agent.gitName || '');
     setEditGitEmail(agent.gitEmail || '');
     setEditing(true);
+  }
+
+  function addEnvVarEntry() {
+    setEditEnvVarEntries(prev => [...prev, {key: '', value: ''}]);
+  }
+
+  function removeEnvVarEntry(index: number) {
+    setEditEnvVarEntries(prev => prev.filter((_, i) => i !== index));
+  }
+
+  function updateEnvVarKey(index: number, key: string) {
+    setEditEnvVarEntries(prev => prev.map((e, i) => i === index ? {...e, key} : e));
+  }
+
+  function updateEnvVarValue(index: number, value: string) {
+    setEditEnvVarEntries(prev => prev.map((e, i) => i === index ? {...e, value} : e));
+  }
+
+  function buildEnvVarsJson(): string | null {
+    const obj: Record<string, string> = {};
+    for (const e of editEnvVarEntries) {
+      if (e.key.trim()) obj[e.key.trim()] = e.value;
+    }
+    const keys = Object.keys(obj);
+    return keys.length > 0 ? JSON.stringify(obj) : null;
   }
 
   async function handleSave() {
     if (!agent) return;
     setSaving(true);
     const body: Record<string, unknown> = {
+      type: editType,
       name: editName,
       role: editRole,
       execPath: editExecPath || null,
@@ -152,19 +202,16 @@ export default function AgentDetailPage() {
       gitName: editGitName || null,
       gitEmail: editGitEmail || null,
     };
-    if (editEnvVars) {
-      try { body.envVars = JSON.parse(editEnvVars); } catch { body.envVars = editEnvVars; }
-    } else {
-      body.envVars = null;
-    }
+    body.envVars = buildEnvVarsJson();
     await fetch(`/api/agents/${agentId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    setAgent({ ...agent, name: editName, role: editRole, execPath: editExecPath || null, argsTemplate: editArgsTemplate || null, gitName: editGitName || null, gitEmail: editGitEmail || null });
+    setAgent({ ...agent, type: editType, name: editName, role: editRole, execPath: editExecPath || null, argsTemplate: editArgsTemplate || null, envVars: buildEnvVarsJson(), config: null, gitName: editGitName || null, gitEmail: editGitEmail || null });
     setSaving(false);
     setEditing(false);
+    setError('');
   }
 
   function cancelEditing() {
@@ -207,7 +254,30 @@ export default function AgentDetailPage() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold">编辑 Agent</h3>
-                <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700">{agent.type}</span>
+              </div>
+
+              {error && <div className="alert-error">{error}</div>}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">CLI 工具</label>
+                <select
+                  value={editType}
+                  onChange={(e) => {
+                    const newType = e.target.value;
+                    setEditType(newType);
+                    const def = AGENT_TYPES[newType as keyof typeof AGENT_TYPES];
+                    if (def) {
+                      setEditExecPath(def.defaultPath);
+                      setEditArgsTemplate(def.defaultArgs);
+                      setEditEnvVarEntries(def.defaultEnvKeys.map(k => ({key: k, value: ''})));
+                    }
+                  }}
+                  className="input"
+                >
+                  {Object.entries(AGENT_TYPES).map(([key, val]) => (
+                    <option key={key} value={key}>{val.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -251,6 +321,86 @@ export default function AgentDetailPage() {
                   onChange={(e) => setEditArgsTemplate(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">环境变量</label>
+                <p className="text-xs text-gray-400 mb-2">配置 Agent 运行时需要的环境变量（API Key 等）</p>
+                <div className="space-y-3">
+                  {editEnvVarEntries.map((entry, i) => {
+                    const metaLabel = getEnvKeyLabel(entry.key);
+                    const metaPlaceholder = getEnvKeyPlaceholder(entry.key);
+                    const isKey = isApiKeyField(entry.key);
+                    const isShown = visibleValues.has(i);
+                    const isUrl = entry.key.includes('URL') || entry.key.includes('BASE_URL');
+                    return { entry, i, metaLabel, metaPlaceholder, isKey, isShown, isUrl };
+                  }).sort((a, b) => {
+                    if (a.isUrl && !b.isUrl) return -1;
+                    if (!a.isUrl && b.isUrl) return 1;
+                    return 0;
+                  }).map(({ entry, i, metaLabel, metaPlaceholder, isKey, isShown, isUrl }) => (
+                      <div key={i} className="border border-gray-200 rounded-lg p-3 bg-white">
+                        <div className="flex items-center gap-2 mb-2">
+                          {metaLabel ? (
+                            <span className="text-xs font-medium px-2 py-0.5 rounded bg-blue-100 text-blue-700">{metaLabel}</span>
+                          ) : (
+                            <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-200 text-gray-500">{entry.key || '自定义'}</span>
+                          )}
+                        </div>
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            value={entry.key}
+                            onChange={(e) => updateEnvVarKey(i, e.target.value)}
+                            className="w-48 px-2 py-2 border border-gray-200 rounded text-xs font-mono bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="环境变量名"
+                          />
+                          <div className="flex-1 relative">
+                            <input
+                              type={isKey && !isShown ? 'password' : 'text'}
+                              value={entry.value}
+                              onChange={(e) => updateEnvVarValue(i, e.target.value)}
+                              className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                              placeholder={metaPlaceholder || '变量值'}
+                            />
+                            {isKey && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const next = new Set(visibleValues);
+                                  if (next.has(i)) next.delete(i); else next.add(i);
+                                  setVisibleValues(next);
+                                }}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                                title={isShown ? '隐藏' : '显示'}
+                              >
+                                {isShown ? (
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                ) : (
+                                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeEnvVarEntry(i)}
+                            className="shrink-0 w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="移除"
+                          >
+                            &times;
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={addEnvVarEntry}
+                  className="mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  + 添加环境变量
+                </button>
               </div>
 
               <fieldset className="border border-gray-200 rounded-lg p-4">
@@ -344,6 +494,26 @@ export default function AgentDetailPage() {
                   <span className="text-gray-500">角色：</span>
                   <span>{ROLE_LABELS[agent.role] || agent.role}</span>
                 </div>
+                {(() => {
+                  const vars: Record<string, string> = {};
+                  if (agent.envVars) {
+                    try { Object.assign(vars, JSON.parse(agent.envVars)); } catch {}
+                  }
+                  const entries = Object.entries(vars);
+                  if (entries.length === 0) return null;
+                  return (
+                    <div className="col-span-2 space-y-1">
+                      <span className="text-gray-500">环境变量：</span>
+                      {entries.map(([k, v]) => (
+                        <div key={k} className="flex gap-2 items-center ml-2">
+                          <code className="bg-gray-100 px-1 rounded text-xs font-mono">{k}</code>
+                          <span className="text-gray-400">=</span>
+                          <code className="bg-gray-100 px-1 rounded text-xs font-mono text-gray-500 truncate max-w-[200px]">{v}</code>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
                 {agent.gitName && (
                   <div>
                     <span className="text-gray-500">Git 用户：</span>

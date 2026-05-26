@@ -47,11 +47,13 @@ export async function PUT(
     return NextResponse.json({ error: 'Forbidden: only creator can edit' }, { status: 403 });
   }
 
-  const { name, role, execPath, argsTemplate, envVars, enabled, gitName, gitEmail } = await req.json();
+  const { name, role, type, execPath, argsTemplate, envVars, config, enabled, gitName, gitEmail } = await req.json();
   const updates: Record<string, unknown> = {};
 
   if (name) updates.name = name;
   if (role) updates.role = role;
+  if (type) updates.type = type;
+  if (config !== undefined) updates.config = config;
   if (execPath !== undefined) updates.execPath = execPath;
   if (argsTemplate !== undefined) updates.argsTemplate = argsTemplate;
   if (envVars !== undefined) updates.envVars = envVars;
