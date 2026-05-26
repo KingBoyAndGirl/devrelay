@@ -497,7 +497,7 @@ function startServer(flags: Record<string, string> = {}) {
         return sessionId
           ? ['-p', prompt, '--resume', sessionId, '--output-format', 'stream-json', '--verbose']
           : ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
-      case 'codex':   return ['--skip-git-repo-check', 'exec', prompt];
+      case 'codex':   return ['exec', '--skip-git-repo-check', prompt];
       case 'hermes':
         return sessionId
           ? ['-z', prompt, '--continue', 'chat']
