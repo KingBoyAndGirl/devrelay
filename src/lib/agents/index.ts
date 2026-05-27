@@ -35,10 +35,3 @@ export function getEnvKeyLabel(key: string): string {
 export function getEnvKeyPlaceholder(key: string): string {
   return ENV_KEY_META[key]?.placeholder ?? ''
 }
-
-// Re-export from spawn
-export type { AgentSpawnConfig } from './spawn'
-export { buildSpawnConfig, classifyStderr } from './spawn'
-
-// Re-export discover (unchanged)
-export { discoverCLIs } from './discover'
