@@ -100,6 +100,7 @@ export default function FloatingAgentChat() {
                 agentName={selectedAgent.name}
                 onClose={closeChat}
                 positioned="inline"
+                hideHeader={true}
               />
             </div>
           </div>

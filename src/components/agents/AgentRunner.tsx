@@ -23,6 +23,7 @@ interface AgentRunnerProps {
   projectId?: string
   taskId?: string
   positioned?: 'inline' | 'drawer' | 'floating'
+  hideHeader?: boolean
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -39,7 +40,7 @@ function formatTime(ts: number): string {
 
 // ── Component ────────────────────────────────────────────────────
 
-export default function AgentRunner({ agentId, agentName, onClose, projectId, taskId, positioned = 'inline' }: AgentRunnerProps) {
+export default function AgentRunner({ agentId, agentName, onClose, projectId, taskId, positioned = 'inline', hideHeader = false }: AgentRunnerProps) {
   const [turns, setTurns] = useState<Turn[]>([])
   const [activeTurn, setActiveTurn] = useState<Turn | null>(null)
   const [prompt, setPrompt] = useState('')
@@ -191,25 +192,27 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
   const terminal = (
     <div className={`flex flex-col bg-white border border-gray-200 rounded-xl overflow-hidden transition-all ${
       positioned === 'floating' ? 'shadow-2xl' : ''
-    }`} style={positioned === 'inline' ? { height: '70vh', maxHeight: '800px' } : undefined}>
+    } ${hideHeader ? 'h-full' : ''}`} style={positioned === 'inline' && !hideHeader ? { height: '70vh', maxHeight: '800px' } : undefined}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
-            {agentName.charAt(0)}
+      {!hideHeader && (
+        <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
+              {agentName.charAt(0)}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">{agentName}</p>
+              {activeTurn?.status === 'running' && <p className="text-xs text-blue-600">正在执行...</p>}
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">{agentName}</p>
-            {activeTurn?.status === 'running' && <p className="text-xs text-blue-600">正在执行...</p>}
+          <div className="flex items-center gap-2">
+            {turns.length > 0 && (
+              <button onClick={() => { setTurns([]); setActiveTurn(null) }} className="text-gray-400 hover:text-gray-600 text-xs">清空</button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {turns.length > 0 && (
-            <button onClick={() => { setTurns([]); setActiveTurn(null) }} className="text-gray-400 hover:text-gray-600 text-xs">清空</button>
-          )}
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
-        </div>
-      </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-6 bg-gray-50/50">
