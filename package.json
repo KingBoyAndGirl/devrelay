@@ -5,6 +5,7 @@
   "description": "AI-driven software delivery lifecycle management platform",
   "license": "AGPL-3.0",
   "scripts": {
+    "clean": "rm -rf .next && npm run dev",
     "dev": "tsx server.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",
