@@ -22,11 +22,14 @@ export default function FloatingAgentChat() {
   const [maximized, setMaximized] = useState(false)
   const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const selectorRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // Refs for resize state (persist across re-renders)
   const resizing = useRef(false)
   const startX = useRef(0)
   const startY = useRef(0)
+  const lastW = useRef(0)
+  const lastH = useRef(0)
   const startW = useRef(0)
   const startH = useRef(0)
   const handleRef = useRef('')
@@ -41,9 +44,11 @@ export default function FloatingAgentChat() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  // Resize drag — stable effect, no size dependency
+  // Resize drag — manipulate DOM directly for smoothness, sync state on mouseup
   useEffect(() => {
     if (maximized || !isOpen) return
+    const container = containerRef.current
+    if (!container) return
 
     const onMove = (e: MouseEvent) => {
       if (!resizing.current) return
@@ -54,18 +59,21 @@ export default function FloatingAgentChat() {
       const maxW = window.innerWidth - SIDEBAR_W - GAP * 2
       const maxH = window.innerHeight - GAP * 2
 
+      let newW = 0, newH = 0
       if (h.includes('e') || h.includes('w')) {
-        const newW = h.includes('w')
+        newW = h.includes('w')
           ? Math.max(MIN_W, Math.min(startW.current + dx, maxW))
           : Math.max(MIN_W, Math.min(startW.current - dx, maxW))
-        setSize(s => ({ ...s, w: newW }))
+        container.style.width = newW + 'px'
       }
       if (h.includes('n') || h.includes('s')) {
-        const newH = h.includes('n')
+        newH = h.includes('n')
           ? Math.max(MIN_H, Math.min(startH.current + dy, maxH))
           : Math.max(MIN_H, Math.min(startH.current - dy, maxH))
-        setSize(s => ({ ...s, h: newH }))
+        container.style.height = newH + 'px'
       }
+      lastW.current = newW || lastW.current
+      lastH.current = newH || lastH.current
     }
 
     const onUp = () => {
@@ -73,10 +81,14 @@ export default function FloatingAgentChat() {
       resizing.current = false
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
+      // Sync final dimensions back to React state
+      if (lastW.current || lastH.current) {
+        setSize(s => ({
+          w: lastW.current || s.w,
+          h: lastH.current || s.h,
+        }))
+      }
     }
-
-    const container = document.getElementById('floating-chat-window')
-    if (!container) return
 
     const onContainerDown = (e: Event) => {
       const me = e as MouseEvent
@@ -89,6 +101,8 @@ export default function FloatingAgentChat() {
       startY.current = me.clientY
       startW.current = size.w
       startH.current = size.h
+      lastW.current = 0
+      lastH.current = 0
       handleRef.current = handleEl.dataset.resizeHandle!
       document.body.style.userSelect = 'none'
       document.body.style.cursor = CURSOR_MAP[handleRef.current] || 'default'
@@ -128,6 +142,7 @@ export default function FloatingAgentChat() {
       {isOpen && selectedAgent && (
         <div
           id="floating-chat-window"
+          ref={containerRef}
           className="flex flex-col overflow-hidden border border-gray-200 rounded-xl shadow-2xl bg-white"
           style={maximized ? {
             position: 'absolute',
