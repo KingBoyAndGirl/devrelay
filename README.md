@@ -19,12 +19,17 @@ AI 驱动的软件交付全生命周期管理平台。通过 Agent 自动化完�
 # 安装依赖
 npm install
 
+# 安装 Go 并编译 Agent Sidecar（首次运行，约 1 分钟）
+npm run agent:setup
+
 # 初始化数据库（首次运行）
 npm run db:migrate
 
 # 启动开发服务器（Next.js + Go Sidecar）
 npm run dev
 ```
+
+> `npm run agent:setup` 会自动检测 Go 环境，未安装时自动下载安装，并编译 Sidecar 二进制。
 
 服务启动后访问 http://localhost:3000，默认管理员账号见 `.env`。
 
