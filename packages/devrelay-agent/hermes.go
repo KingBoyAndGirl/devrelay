@@ -83,6 +83,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	// Stdout reader — dispatches notifications
 	stdoutDone := make(chan struct{})
+	var thinkingBuf strings.Builder
 	go func() {
 		for rpc.scanner.Scan() {
 			rpc.dispatch(rpc.scanner.Text(), func(method string, params json.RawMessage) {
@@ -109,7 +110,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					case "agent_message_chunk":
 						output.WriteString(ev.Update.Content.Text)
 					case "agent_thought_chunk":
-						msgCh <- Message{Type: "thinking", Text: ev.Update.Content.Text}
+						thinkingBuf.WriteString(ev.Update.Content.Text)
 					case "tool_call":
 						msgCh <- Message{Type: "tool_use", ToolName: ev.Update.Name, ToolInput: string(ev.Update.Args)}
 					case "tool_call_update":
@@ -117,6 +118,10 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 							msgCh <- Message{Type: "tool_result", Text: string(ev.Update.Result)}
 						}
 					case "turn_end":
+						if thinkingBuf.Len() > 0 {
+							msgCh <- Message{Type: "thinking", Text: thinkingBuf.String()}
+							thinkingBuf.Reset()
+						}
 						if promptInProgress {
 							promptDone <- struct {
 								status string
@@ -133,6 +138,10 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					}
 					json.Unmarshal(params, &ev)
 					if ev.Notification.Type == "turn_end" {
+						if thinkingBuf.Len() > 0 {
+							msgCh <- Message{Type: "thinking", Text: thinkingBuf.String()}
+							thinkingBuf.Reset()
+						}
 						if promptInProgress {
 							promptDone <- struct {
 								status string
@@ -222,6 +231,11 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	finalStatus = "completed"
 
 done:
+	// Flush any remaining thinking content
+	if thinkingBuf.Len() > 0 {
+		msgCh <- Message{Type: "thinking", Text: thinkingBuf.String()}
+		thinkingBuf.Reset()
+	}
 	stdin.Close()
 	<-stdoutDone
 	cmd.Wait()
