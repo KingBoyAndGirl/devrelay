@@ -23,6 +23,14 @@ export default function FloatingAgentChat() {
   const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const selectorRef = useRef<HTMLDivElement>(null)
 
+  // Refs for resize state (persist across re-renders)
+  const resizing = useRef(false)
+  const startX = useRef(0)
+  const startY = useRef(0)
+  const startW = useRef(0)
+  const startH = useRef(0)
+  const handleRef = useRef('')
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (selectorRef.current && !selectorRef.current.contains(e.target as Node)) {
@@ -33,37 +41,36 @@ export default function FloatingAgentChat() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  // Resize via drag handles
+  // Resize drag — stable effect, no size dependency
   useEffect(() => {
     if (maximized || !isOpen) return
-    let resizing = false
-    let startX = 0, startY = 0, startW = 0, startH = 0, handle = ''
 
     const onMove = (e: MouseEvent) => {
-      if (!resizing) return
+      if (!resizing.current) return
       e.preventDefault()
-      const dx = startX - e.clientX
-      const dy = startY - e.clientY
-      if (handle.includes('e') || handle.includes('w')) {
-        const maxW = window.innerWidth - SIDEBAR_W - GAP * 2
-        if (handle.includes('w')) {
-          setSize(s => ({ ...s, w: Math.max(MIN_W, Math.min(startW + dx, maxW)) }))
-        } else {
-          setSize(s => ({ ...s, w: Math.max(MIN_W, Math.min(startW - dx, maxW)) }))
-        }
+      const dx = startX.current - e.clientX
+      const dy = startY.current - e.clientY
+      const h = handleRef.current
+      const maxW = window.innerWidth - SIDEBAR_W - GAP * 2
+      const maxH = window.innerHeight - GAP * 2
+
+      if (h.includes('e') || h.includes('w')) {
+        const newW = h.includes('w')
+          ? Math.max(MIN_W, Math.min(startW.current + dx, maxW))
+          : Math.max(MIN_W, Math.min(startW.current - dx, maxW))
+        setSize(s => ({ ...s, w: newW }))
       }
-      if (handle.includes('n') || handle.includes('s')) {
-        const maxH = window.innerHeight - GAP * 2
-        if (handle.includes('n')) {
-          setSize(s => ({ ...s, h: Math.max(MIN_H, Math.min(startH + dy, maxH)) }))
-        } else {
-          setSize(s => ({ ...s, h: Math.max(MIN_H, Math.min(startH - dy, maxH)) }))
-        }
+      if (h.includes('n') || h.includes('s')) {
+        const newH = h.includes('n')
+          ? Math.max(MIN_H, Math.min(startH.current + dy, maxH))
+          : Math.max(MIN_H, Math.min(startH.current - dy, maxH))
+        setSize(s => ({ ...s, h: newH }))
       }
     }
 
     const onUp = () => {
-      resizing = false
+      if (!resizing.current) return
+      resizing.current = false
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
@@ -77,14 +84,14 @@ export default function FloatingAgentChat() {
       const handleEl = target.closest('[data-resize-handle]') as HTMLElement | null
       if (!handleEl) return
       me.preventDefault()
-      resizing = true
-      startX = me.clientX
-      startY = me.clientY
-      startW = size.w
-      startH = size.h
-      handle = handleEl.dataset.resizeHandle!
+      resizing.current = true
+      startX.current = me.clientX
+      startY.current = me.clientY
+      startW.current = size.w
+      startH.current = size.h
+      handleRef.current = handleEl.dataset.resizeHandle!
       document.body.style.userSelect = 'none'
-      document.body.style.cursor = CURSOR_MAP[handle] || 'default'
+      document.body.style.cursor = CURSOR_MAP[handleRef.current] || 'default'
     }
 
     container.addEventListener('mousedown', onContainerDown)
@@ -98,7 +105,7 @@ export default function FloatingAgentChat() {
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [maximized, isOpen, size.w, size.h])
+  }, [maximized, isOpen])
 
   if (isLoading) return null
 
@@ -236,51 +243,28 @@ export default function FloatingAgentChat() {
           {/* Resize handles (only in normal mode) */}
           {!maximized && (
             <>
-              {/* Top edge: resize upward */}
-              <div
-                data-resize-handle="n"
-                className="absolute top-0 left-10 right-10 h-2.5 cursor-ns-resize z-30"
-              />
-
-              {/* Left edge: resize leftward */}
-              <div
-                data-resize-handle="w"
-                className="absolute top-10 left-0 w-1.5 bottom-0 cursor-ew-resize z-30"
-              />
-
+              {/* Top edge */}
+              <div data-resize-handle="n" className="absolute top-0 left-10 right-10 h-2.5 cursor-ns-resize z-30" />
+              {/* Left edge */}
+              <div data-resize-handle="w" className="absolute top-10 left-0 w-1.5 bottom-0 cursor-ew-resize z-30" />
               {/* Top-right corner */}
-              <div
-                data-resize-handle="ne"
-                className="absolute top-0 right-0 w-10 h-10 cursor-nesw-resize z-30 group"
-              >
+              <div data-resize-handle="ne" className="absolute top-0 right-0 w-10 h-10 cursor-nesw-resize z-30 group">
                 <svg className="absolute top-1.5 right-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
                   <path d="M10 10L0 0" stroke="currentColor" strokeWidth="1.5" fill="none" />
                   <path d="M10 5L5 0" stroke="currentColor" strokeWidth="1.5" fill="none" />
                 </svg>
               </div>
-
               {/* Bottom-left corner */}
-              <div
-                data-resize-handle="sw"
-                className="absolute bottom-0 left-0 w-10 h-10 cursor-nesw-resize z-30 group"
-              >
+              <div data-resize-handle="sw" className="absolute bottom-0 left-0 w-10 h-10 cursor-nesw-resize z-30 group">
                 <svg className="absolute bottom-1.5 left-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
                   <path d="M0 0L10 10" stroke="currentColor" strokeWidth="1.5" fill="none" />
                   <path d="M0 5L5 10" stroke="currentColor" strokeWidth="1.5" fill="none" />
                 </svg>
               </div>
-
-              {/* Right edge: resize rightward */}
-              <div
-                data-resize-handle="e"
-                className="absolute top-10 right-0 w-1.5 bottom-10 cursor-ew-resize z-30"
-              />
-
-              {/* Bottom edge: resize downward */}
-              <div
-                data-resize-handle="s"
-                className="absolute bottom-0 left-10 right-10 h-2.5 cursor-ns-resize z-30"
-              />
+              {/* Right edge */}
+              <div data-resize-handle="e" className="absolute top-10 right-0 w-1.5 bottom-10 cursor-ew-resize z-30" />
+              {/* Bottom edge */}
+              <div data-resize-handle="s" className="absolute bottom-0 left-10 right-10 h-2.5 cursor-ns-resize z-30" />
             </>
           )}
         </div>
