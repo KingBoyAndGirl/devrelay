@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useFloatingAgent } from './FloatingAgentContext'
 import AgentRunner from './AgentRunner'
 
@@ -11,13 +11,17 @@ const GAP = 24
 const DEFAULT_W = 384
 const DEFAULT_H = 600
 
+const CURSOR_MAP: Record<string, string> = {
+  nw: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', se: 'nwse-resize',
+  n: 'ns-resize', s: 'ns-resize', w: 'ew-resize', e: 'ew-resize',
+}
+
 export default function FloatingAgentChat() {
   const { agents, selectedAgent, isOpen, isLoading, selectAgent, toggleChat, closeChat } = useFloatingAgent()
   const [showSelector, setShowSelector] = useState(false)
   const [maximized, setMaximized] = useState(false)
   const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const selectorRef = useRef<HTMLDivElement>(null)
-  const dragHandleRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -29,7 +33,7 @@ export default function FloatingAgentChat() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  // Drag-to-resize
+  // Resize via drag handles
   useEffect(() => {
     if (maximized || !isOpen) return
     let resizing = false
@@ -40,11 +44,21 @@ export default function FloatingAgentChat() {
       e.preventDefault()
       const dx = startX - e.clientX
       const dy = startY - e.clientY
-      if (handle.includes('e')) {
-        setSize(s => ({ ...s, w: Math.max(MIN_W, Math.min(startW + dx, window.innerWidth - SIDEBAR_W - GAP * 2)) }))
+      if (handle.includes('e') || handle.includes('w')) {
+        const maxW = window.innerWidth - SIDEBAR_W - GAP * 2
+        if (handle.includes('w')) {
+          setSize(s => ({ ...s, w: Math.max(MIN_W, Math.min(startW + dx, maxW)) }))
+        } else {
+          setSize(s => ({ ...s, w: Math.max(MIN_W, Math.min(startW - dx, maxW)) }))
+        }
       }
-      if (handle.includes('s')) {
-        setSize(s => ({ ...s, h: Math.max(MIN_H, Math.min(startH + dy, window.innerHeight - GAP * 2)) }))
+      if (handle.includes('n') || handle.includes('s')) {
+        const maxH = window.innerHeight - GAP * 2
+        if (handle.includes('n')) {
+          setSize(s => ({ ...s, h: Math.max(MIN_H, Math.min(startH + dy, maxH)) }))
+        } else {
+          setSize(s => ({ ...s, h: Math.max(MIN_H, Math.min(startH - dy, maxH)) }))
+        }
       }
     }
 
@@ -54,32 +68,31 @@ export default function FloatingAgentChat() {
       document.body.style.cursor = ''
     }
 
-    const onStart = (e: MouseEvent, h: string) => {
-      e.preventDefault()
+    const container = document.getElementById('floating-chat-window')
+    if (!container) return
+
+    const onContainerDown = (e: Event) => {
+      const me = e as MouseEvent
+      const target = me.target as HTMLElement
+      const handleEl = target.closest('[data-resize-handle]') as HTMLElement | null
+      if (!handleEl) return
+      me.preventDefault()
       resizing = true
-      startX = e.clientX
-      startY = e.clientY
+      startX = me.clientX
+      startY = me.clientY
       startW = size.w
       startH = size.h
-      handle = h
+      handle = handleEl.dataset.resizeHandle!
       document.body.style.userSelect = 'none'
-      document.body.style.cursor = h === 'nw' ? 'nwse-resize' : h === 'e' ? 'ew-resize' : 'ns-resize'
+      document.body.style.cursor = CURSOR_MAP[handle] || 'default'
     }
 
-    const tl = dragHandleRef.current
-    const tr = document.getElementById('resize-handle-tr')
-    const bl = document.getElementById('resize-handle-bl')
-
-    tl?.addEventListener('mousedown', (e) => onStart(e, 'nw'))
-    tr?.addEventListener('mousedown', (e) => onStart(e, 'ne'))
-    bl?.addEventListener('mousedown', (e) => onStart(e, 'sw'))
+    container.addEventListener('mousedown', onContainerDown)
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
 
     return () => {
-      tl?.removeEventListener('mousedown', (e) => onStart(e, 'nw'))
-      tr?.removeEventListener('mousedown', (e) => onStart(e, 'ne'))
-      bl?.removeEventListener('mousedown', (e) => onStart(e, 'sw'))
+      container.removeEventListener('mousedown', onContainerDown)
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
       document.body.style.userSelect = ''
@@ -107,6 +120,7 @@ export default function FloatingAgentChat() {
       {/* Chat Window */}
       {isOpen && selectedAgent && (
         <div
+          id="floating-chat-window"
           className="flex flex-col overflow-hidden border border-gray-200 rounded-xl shadow-2xl bg-white"
           style={maximized ? {
             position: 'absolute',
@@ -123,10 +137,10 @@ export default function FloatingAgentChat() {
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b shrink-0 relative z-20">
-            {/* Drag handle (top-left corner, only in normal mode) */}
+            {/* Drag handle (top-left corner) */}
             {!maximized && (
               <div
-                ref={dragHandleRef}
+                data-resize-handle="nw"
                 className="absolute top-0 left-0 w-10 h-10 cursor-nwse-resize z-30 group"
               >
                 <svg className="absolute top-1.5 left-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
@@ -181,7 +195,6 @@ export default function FloatingAgentChat() {
 
             {/* Actions */}
             <div className="flex items-center gap-1">
-              {/* Maximize / Restore */}
               <button
                 onClick={() => setMaximized(m => !m)}
                 className="p-1.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
@@ -223,9 +236,21 @@ export default function FloatingAgentChat() {
           {/* Resize handles (only in normal mode) */}
           {!maximized && (
             <>
-              {/* Top-right: N+E resize */}
+              {/* Top edge: resize upward */}
               <div
-                id="resize-handle-tr"
+                data-resize-handle="n"
+                className="absolute top-0 left-10 right-10 h-2.5 cursor-ns-resize z-30"
+              />
+
+              {/* Left edge: resize leftward */}
+              <div
+                data-resize-handle="w"
+                className="absolute top-10 left-0 w-1.5 bottom-0 cursor-ew-resize z-30"
+              />
+
+              {/* Top-right corner */}
+              <div
+                data-resize-handle="ne"
                 className="absolute top-0 right-0 w-10 h-10 cursor-nesw-resize z-30 group"
               >
                 <svg className="absolute top-1.5 right-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
@@ -234,9 +259,9 @@ export default function FloatingAgentChat() {
                 </svg>
               </div>
 
-              {/* Bottom-left: S+W resize */}
+              {/* Bottom-left corner */}
               <div
-                id="resize-handle-bl"
+                data-resize-handle="sw"
                 className="absolute bottom-0 left-0 w-10 h-10 cursor-nesw-resize z-30 group"
               >
                 <svg className="absolute bottom-1.5 left-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
@@ -244,6 +269,18 @@ export default function FloatingAgentChat() {
                   <path d="M0 5L5 10" stroke="currentColor" strokeWidth="1.5" fill="none" />
                 </svg>
               </div>
+
+              {/* Right edge: resize rightward */}
+              <div
+                data-resize-handle="e"
+                className="absolute top-10 right-0 w-1.5 bottom-10 cursor-ew-resize z-30"
+              />
+
+              {/* Bottom edge: resize downward */}
+              <div
+                data-resize-handle="s"
+                className="absolute bottom-0 left-10 right-10 h-2.5 cursor-ns-resize z-30"
+              />
             </>
           )}
         </div>
