@@ -46,19 +46,18 @@ export default async function WorkspaceLayout({
         />
 
         {/* Main content */}
-        <div className="flex-1 min-w-0">
+        <div id="main-content" className="flex-1 min-w-0 relative">
           {/* Top bar */}
-          <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between h-12">
+          <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between h-12 relative z-10">
             <SearchTrigger />
             <NotificationBell />
           </header>
           {children}
+          <FloatingAgentChat />
         </div>
 
         <GlobalSearch slug={slug} />
       </div>
-
-      <FloatingAgentChat />
     </FloatingAgentProvider>
   );
 }

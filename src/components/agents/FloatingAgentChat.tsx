@@ -1,15 +1,24 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useFloatingAgent } from './FloatingAgentContext'
 import AgentRunner from './AgentRunner'
+
+const MIN_W = 320
+const MIN_H = 360
+const SIDEBAR_W = 256
+const GAP = 24
+const DEFAULT_W = 384
+const DEFAULT_H = 600
 
 export default function FloatingAgentChat() {
   const { agents, selectedAgent, isOpen, isLoading, selectAgent, toggleChat, closeChat } = useFloatingAgent()
   const [showSelector, setShowSelector] = useState(false)
+  const [maximized, setMaximized] = useState(false)
+  const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const selectorRef = useRef<HTMLDivElement>(null)
+  const dragHandleRef = useRef<HTMLDivElement>(null)
 
-  // Close selector on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (selectorRef.current && !selectorRef.current.contains(e.target as Node)) {
@@ -20,10 +29,68 @@ export default function FloatingAgentChat() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
+  // Drag-to-resize
+  useEffect(() => {
+    if (maximized || !isOpen) return
+    let resizing = false
+    let startX = 0, startY = 0, startW = 0, startH = 0, handle = ''
+
+    const onMove = (e: MouseEvent) => {
+      if (!resizing) return
+      e.preventDefault()
+      const dx = startX - e.clientX
+      const dy = startY - e.clientY
+      if (handle.includes('e')) {
+        setSize(s => ({ ...s, w: Math.max(MIN_W, Math.min(startW + dx, window.innerWidth - SIDEBAR_W - GAP * 2)) }))
+      }
+      if (handle.includes('s')) {
+        setSize(s => ({ ...s, h: Math.max(MIN_H, Math.min(startH + dy, window.innerHeight - GAP * 2)) }))
+      }
+    }
+
+    const onUp = () => {
+      resizing = false
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+
+    const onStart = (e: MouseEvent, h: string) => {
+      e.preventDefault()
+      resizing = true
+      startX = e.clientX
+      startY = e.clientY
+      startW = size.w
+      startH = size.h
+      handle = h
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = h === 'nw' ? 'nwse-resize' : h === 'e' ? 'ew-resize' : 'ns-resize'
+    }
+
+    const tl = dragHandleRef.current
+    const tr = document.getElementById('resize-handle-tr')
+    const bl = document.getElementById('resize-handle-bl')
+
+    tl?.addEventListener('mousedown', (e) => onStart(e, 'nw'))
+    tr?.addEventListener('mousedown', (e) => onStart(e, 'ne'))
+    bl?.addEventListener('mousedown', (e) => onStart(e, 'sw'))
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+
+    return () => {
+      tl?.removeEventListener('mousedown', (e) => onStart(e, 'nw'))
+      tr?.removeEventListener('mousedown', (e) => onStart(e, 'ne'))
+      bl?.removeEventListener('mousedown', (e) => onStart(e, 'sw'))
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+  }, [maximized, isOpen, size.w, size.h])
+
   if (isLoading) return null
 
   return (
-    <>
+    <div className="contents">
       {/* Floating Button */}
       {!isOpen && (
         <button
@@ -39,73 +106,148 @@ export default function FloatingAgentChat() {
 
       {/* Chat Window */}
       {isOpen && selectedAgent && (
-        <div className="fixed bottom-6 right-6 z-50 w-96 max-md:inset-0 max-md:w-full">
-          <div className="flex flex-col bg-white border border-gray-200 rounded-xl shadow-2xl overflow-hidden" style={{ height: '600px', maxHeight: '80vh' }}>
-            {/* Header with Agent Selector */}
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b shrink-0">
-              <div className="flex items-center gap-3 min-w-0" ref={selectorRef}>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowSelector(!showSelector)}
-                    className="flex items-center gap-2 hover:bg-gray-100 rounded-lg px-2 py-1 transition-colors"
-                  >
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
-                      {selectedAgent.name.charAt(0)}
-                    </div>
-                    <div className="min-w-0 text-left">
-                      <p className="text-sm font-medium text-gray-900 truncate">{selectedAgent.name}</p>
-                      <p className="text-xs text-gray-500">{selectedAgent.type}</p>
-                    </div>
-                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-
-                  {/* Agent Selector Dropdown */}
-                  {showSelector && agents.length > 1 && (
-                    <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10">
-                      {agents.map(agent => (
-                        <button
-                          key={agent.id}
-                          onClick={() => {
-                            selectAgent(agent)
-                            setShowSelector(false)
-                          }}
-                          className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 transition-colors ${
-                            agent.id === selectedAgent.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
-                          }`}
-                        >
-                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
-                            {agent.name.charAt(0)}
-                          </div>
-                          <span className="truncate">{agent.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+        <div
+          className="flex flex-col overflow-hidden border border-gray-200 rounded-xl shadow-2xl bg-white"
+          style={maximized ? {
+            position: 'absolute',
+            inset: `${GAP}px`,
+            zIndex: 50,
+          } : {
+            position: 'fixed',
+            bottom: `${GAP}px`,
+            right: `${GAP}px`,
+            zIndex: 50,
+            width: size.w,
+            height: size.h,
+          }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b shrink-0 relative z-20">
+            {/* Drag handle (top-left corner, only in normal mode) */}
+            {!maximized && (
+              <div
+                ref={dragHandleRef}
+                className="absolute top-0 left-0 w-10 h-10 cursor-nwse-resize z-30 group"
+              >
+                <svg className="absolute top-1.5 left-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
+                  <path d="M0 10L10 0" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                  <path d="M0 5L5 0" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                </svg>
               </div>
+            )}
+
+            {/* Agent info + selector */}
+            <div className="flex items-center gap-3 min-w-0 ml-4" ref={selectorRef}>
+              <div className="relative">
+                <button
+                  onClick={() => setShowSelector(!showSelector)}
+                  className="flex items-center gap-2 hover:bg-gray-100 rounded-lg px-2 py-1 transition-colors"
+                >
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
+                    {selectedAgent.name.charAt(0)}
+                  </div>
+                  <div className="min-w-0 text-left">
+                    <p className="text-sm font-medium text-gray-900 truncate">{selectedAgent.name}</p>
+                    <p className="text-xs text-gray-500">{selectedAgent.type}</p>
+                  </div>
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {showSelector && agents.length > 1 && (
+                  <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10">
+                    {agents.map(agent => (
+                      <button
+                        key={agent.id}
+                        onClick={() => {
+                          selectAgent(agent)
+                          setShowSelector(false)
+                        }}
+                        className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 transition-colors ${
+                          agent.id === selectedAgent.id ? 'bg-blue-50 text-blue-700' : 'text-gray-700'
+                        }`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
+                          {agent.name.charAt(0)}
+                        </div>
+                        <span className="truncate">{agent.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-1">
+              {/* Maximize / Restore */}
+              <button
+                onClick={() => setMaximized(m => !m)}
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+                title={maximized ? '缩小' : '放大'}
+              >
+                {maximized ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                  </svg>
+                )}
+              </button>
               <button
                 onClick={closeChat}
-                className="text-gray-400 hover:text-gray-600 text-lg leading-none"
+                className="p-1.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors"
+                title="关闭"
               >
-                &times;
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
-
-            {/* Agent Runner */}
-            <div className="flex-1 overflow-hidden">
-              <AgentRunner
-                agentId={selectedAgent.id}
-                agentName={selectedAgent.name}
-                onClose={closeChat}
-                positioned="inline"
-                hideHeader={true}
-              />
-            </div>
           </div>
+
+          {/* Agent Runner */}
+          <div className="flex-1 overflow-hidden">
+            <AgentRunner
+              agentId={selectedAgent.id}
+              agentName={selectedAgent.name}
+              onClose={closeChat}
+              positioned="inline"
+              hideHeader={true}
+            />
+          </div>
+
+          {/* Resize handles (only in normal mode) */}
+          {!maximized && (
+            <>
+              {/* Top-right: N+E resize */}
+              <div
+                id="resize-handle-tr"
+                className="absolute top-0 right-0 w-10 h-10 cursor-nesw-resize z-30 group"
+              >
+                <svg className="absolute top-1.5 right-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
+                  <path d="M10 10L0 0" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                  <path d="M10 5L5 0" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                </svg>
+              </div>
+
+              {/* Bottom-left: S+W resize */}
+              <div
+                id="resize-handle-bl"
+                className="absolute bottom-0 left-0 w-10 h-10 cursor-nesw-resize z-30 group"
+              >
+                <svg className="absolute bottom-1.5 left-1.5 w-2.5 h-2.5 text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity" viewBox="0 0 10 10">
+                  <path d="M0 0L10 10" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                  <path d="M0 5L5 10" stroke="currentColor" strokeWidth="1.5" fill="none" />
+                </svg>
+              </div>
+            </>
+          )}
         </div>
       )}
-    </>
+    </div>
   )
 }
