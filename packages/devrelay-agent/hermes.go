@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 )
@@ -51,6 +52,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		resCh <- Result{Status: "failed", Error: err.Error()}
 		return
 	}
+	log.Printf("[hermes] acp started (pid=%d)", cmd.Process.Pid)
 
 	rpc := newRPCHandler(stdin, stdout)
 	promptDone := make(chan struct {
@@ -79,7 +81,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		stderrCh <- buf.String()
 	}()
 
-	// Stdout reader
+	// Stdout reader — dispatches notifications
 	stdoutDone := make(chan struct{})
 	go func() {
 		for rpc.scanner.Scan() {
@@ -89,10 +91,13 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					var ev struct {
 						SessionID string `json:"sessionId,omitempty"`
 						Update    struct {
-							Type string `json:"type"`
-							Text string `json:"text,omitempty"`
-							Name string `json:"name,omitempty"`
-							Args json.RawMessage `json:"args,omitempty"`
+							SessionUpdate string `json:"sessionUpdate"`
+							Content       struct {
+								Text string `json:"text"`
+								Type string `json:"type"`
+							} `json:"content"`
+							Name   string          `json:"name,omitempty"`
+							Args   json.RawMessage `json:"args,omitempty"`
 							Result json.RawMessage `json:"result,omitempty"`
 						} `json:"update"`
 					}
@@ -100,12 +105,12 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					if ev.SessionID != "" {
 						sessionID = ev.SessionID
 					}
-					switch ev.Update.Type {
+					switch ev.Update.SessionUpdate {
 					case "agent_message_chunk":
-						output.WriteString(ev.Update.Text)
-						msgCh <- Message{Type: "text", Text: ev.Update.Text}
+						output.WriteString(ev.Update.Content.Text)
+						msgCh <- Message{Type: "text", Text: ev.Update.Content.Text}
 					case "agent_thought_chunk":
-						msgCh <- Message{Type: "thinking", Text: ev.Update.Text}
+						msgCh <- Message{Type: "thinking", Text: ev.Update.Content.Text}
 					case "tool_call":
 						msgCh <- Message{Type: "tool_use", ToolName: ev.Update.Name, ToolInput: string(ev.Update.Args)}
 					case "tool_call_update":
@@ -138,8 +143,6 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					}
 
 				case "session/request_permission":
-					// Auto-approve permissions (YOLO mode fallback for ACP)
-					// Find the request ID and auto-approve
 					var req struct {
 						RequestID string `json:"requestId"`
 					}
@@ -160,8 +163,9 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	errMsg := ""
 
 	// 1. Initialize
+	log.Printf("[hermes] sending initialize RPC...")
 	_, err := rpc.request(ctx, "initialize", map[string]any{
-		"protocolVersion": "2025-01-15",
+		"protocolVersion": 1,
 		"clientInfo": map[string]string{
 			"name":    "devrelay",
 			"version": "1.0.0",
@@ -172,6 +176,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		goto done
 	}
 	rpc.notify("initialized", nil)
+	log.Printf("[hermes] initialize OK")
 
 	// 2. Create or resume session
 	if resumeRequested != "" {
@@ -184,7 +189,8 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}
 	if sessionID == "" {
 		resp, err := rpc.request(ctx, "session/new", map[string]any{
-			"cwd": opts.Cwd,
+			"cwd":        opts.Cwd,
+			"mcpServers": []any{},
 		})
 		if err != nil {
 			errMsg = fmt.Sprintf("session/new: %v", err)
@@ -192,6 +198,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 		sessionID = extractACPSessionID(resp)
 	}
+	log.Printf("[hermes] session ready (id=%s)", sessionID)
 
 	// 3. Set model if specified
 	if opts.Model != "" {
@@ -201,30 +208,19 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		})
 	}
 
-	// 4. Send prompt
+	// 4. Send prompt — the RPC response IS the completion signal in ACP v1
+	log.Printf("[hermes] sending prompt...")
 	_, err = rpc.request(ctx, "session/prompt", map[string]any{
 		"sessionId": sessionID,
-		"prompt":    prompt,
+		"prompt":    []map[string]any{{"type": "text", "text": prompt}},
 	})
 	if err != nil {
 		errMsg = fmt.Sprintf("session/prompt: %v", err)
 		goto done
 	}
-	promptInProgress = true
 
-	// 5. Wait for completion
-	select {
-	case result := <-promptDone:
-		promptInProgress = false
-		if result.status == "completed" {
-			finalStatus = "completed"
-		} else {
-			finalStatus = "failed"
-			errMsg = result.err
-		}
-	case <-ctx.Done():
-		finalStatus = "timeout"
-	}
+	// ACP v1: prompt response = turn complete (notifications already processed above)
+	finalStatus = "completed"
 
 done:
 	stdin.Close()
@@ -232,7 +228,7 @@ done:
 	cmd.Wait()
 	stderrTail := <-stderrCh
 
-	// Check stderr for provider errors
+	// Check stderr for provider errors when no output was produced
 	if finalStatus == "completed" && output.Len() == 0 && stderrTail != "" {
 		finalStatus = "failed"
 		errMsg = stderrTail
