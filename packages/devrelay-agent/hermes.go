@@ -231,6 +231,11 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	finalStatus = "completed"
 
 done:
+	// Flush any remaining thinking content
+	if thinkingBuf.Len() > 0 {
+		msgCh <- Message{Type: "thinking", Text: thinkingBuf.String()}
+		thinkingBuf.Reset()
+	}
 	stdin.Close()
 	<-stdoutDone
 	cmd.Wait()
