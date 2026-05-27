@@ -5,6 +5,7 @@
   "description": "AI-driven software delivery lifecycle management platform",
   "license": "AGPL-3.0",
   "scripts": {
+    "clean": "rm -rf .next && npm run dev",
     "dev": "tsx server.ts",
     "build": "next build",
     "start": "NODE_ENV=production tsx server.ts",
@@ -14,7 +15,8 @@
     "db:studio": "drizzle-kit studio",
     "devrelay": "tsx src/devrelay/index.ts",
     "agent:sync": "cp src/devrelay/index.ts packages/devrelay-agent/index.ts",
-    "agent:publish": "npm run agent:sync && cd packages/devrelay-agent && npm publish"
+    "agent:publish": "npm run agent:sync && cd packages/devrelay-agent && npm publish",
+    "agent:setup": "bash scripts/setup-agent.sh"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
