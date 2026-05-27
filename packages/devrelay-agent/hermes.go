@@ -108,7 +108,6 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 					switch ev.Update.SessionUpdate {
 					case "agent_message_chunk":
 						output.WriteString(ev.Update.Content.Text)
-						msgCh <- Message{Type: "text", Text: ev.Update.Content.Text}
 					case "agent_thought_chunk":
 						msgCh <- Message{Type: "thinking", Text: ev.Update.Content.Text}
 					case "tool_call":
