@@ -35,7 +35,7 @@ export const openclawBackend: AgentBackend = {
 
     // Final result blob (openclaw 2026.5.x format)
     if (obj.payloads && obj.meta) {
-      return this._handleResultBlob(obj, state)
+      return handleResultBlob(obj, state)
     }
 
     // NDJSON streaming event
@@ -78,34 +78,6 @@ export const openclawBackend: AgentBackend = {
     }
   },
 
-  _handleResultBlob(obj: any, state: ParserState): AgentEvent | null {
-    const meta = obj.meta ?? {}
-    state.sessionId = meta.sessionId ?? meta.session_id
-
-    const stopReason: string = meta.stopReason ?? meta.finishReason ?? ''
-    if (stopReason === 'stop' || stopReason === 'end_turn') {
-      state.finalStatus = 'completed'
-    } else if (stopReason === 'cancelled') {
-      state.finalStatus = 'aborted'
-    } else {
-      state.finalStatus = 'completed'
-    }
-
-    // Extract assistant text from payloads
-    const payloads: any[] = Array.isArray(obj.payloads) ? obj.payloads : []
-    for (const p of payloads) {
-      if (p.role === 'assistant' && p.content) {
-        for (const block of (Array.isArray(p.content) ? p.content : [])) {
-          if (block.type === 'text' && block.text) {
-            state.output += block.text
-            return { type: 'text', content: block.text }
-          }
-        }
-      }
-    }
-    return null
-  },
-
   onEnd(state: ParserState): AgentEvent | null {
     return {
       type: 'exit',
@@ -113,4 +85,32 @@ export const openclawBackend: AgentBackend = {
       sessionId: state.sessionId,
     }
   },
+}
+
+function handleResultBlob(obj: any, state: ParserState): AgentEvent | null {
+  const meta = obj.meta ?? {}
+  state.sessionId = meta.sessionId ?? meta.session_id
+
+  const stopReason: string = meta.stopReason ?? meta.finishReason ?? ''
+  if (stopReason === 'stop' || stopReason === 'end_turn') {
+    state.finalStatus = 'completed'
+  } else if (stopReason === 'cancelled') {
+    state.finalStatus = 'aborted'
+  } else {
+    state.finalStatus = 'completed'
+  }
+
+  // Extract assistant text from payloads
+  const payloads: any[] = Array.isArray(obj.payloads) ? obj.payloads : []
+  for (const p of payloads) {
+    if (p.role === 'assistant' && p.content) {
+      for (const block of (Array.isArray(p.content) ? p.content : [])) {
+        if (block.type === 'text' && block.text) {
+          state.output += block.text
+          return { type: 'text', content: block.text }
+        }
+      }
+    }
+  }
+  return null
 }

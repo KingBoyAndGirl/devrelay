@@ -352,14 +352,15 @@ function TurnEvents({ events }: { events: AgentEvent[] }) {
           )
         }
         if (seg.kind === 'tool_use') {
+          const inputStr = seg.input ? (typeof seg.input === 'string' ? seg.input : JSON.stringify(seg.input, null, 2)) : null
           return (
             <details key={i} className="group">
               <summary className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-700 cursor-pointer hover:bg-purple-100 font-mono">
                 <span>🔧</span> {seg.tool ?? 'tool'}
               </summary>
-              {seg.input && (
+              {inputStr && (
                 <pre className="text-xs text-gray-500 mt-1 pl-4 whitespace-pre-wrap font-mono">
-                  {typeof seg.input === 'string' ? seg.input : JSON.stringify(seg.input, null, 2)}
+                  {inputStr}
                 </pre>
               )}
             </details>

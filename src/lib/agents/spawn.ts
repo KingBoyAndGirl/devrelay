@@ -58,7 +58,7 @@ export function buildSpawnConfig(agent: {
   argsTemplate: string | null
   envVars: string | null
   config?: string | null
-}): { execPath: string; args: string[]; env: Record<string, string>; timeoutMs: number } {
+}): { agentType: string; execPath: string; args: string[]; env: Record<string, string>; timeoutMs: number; cwd?: string } {
   const meta = AGENT_TYPE_META[agent.type as AgentType]
   const envVars: Record<string, string> = {}
   if (agent.envVars) {
@@ -72,6 +72,7 @@ export function buildSpawnConfig(agent: {
     } catch {}
   }
   return {
+    agentType: agent.type,
     execPath: agent.execPath || meta?.defaultPath || '',
     args: [],
     env: envVars,
@@ -84,8 +85,7 @@ export function buildSpawnConfig(agent: {
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 
 export async function* runAgentStream(
-  agentType: string,
-  execPath: string,
+  spawnConfig: { agentType: string; execPath: string; args: string[]; env: Record<string, string>; timeoutMs: number; cwd?: string },
   prompt: string,
   opts?: {
     cwd?: string
@@ -93,18 +93,19 @@ export async function* runAgentStream(
     timeoutMs?: number
     sessionId?: string
     signal?: AbortSignal
+    heartbeatMs?: number
   }
 ): AsyncGenerator<AgentEvent> {
-  const backend = getBackend(agentType)
+  const backend = getBackend(spawnConfig.agentType)
   const config: AgentBackendConfig = {
-    cwd: opts?.cwd,
-    env: opts?.env,
-    timeoutMs: opts?.timeoutMs,
+    cwd: opts?.cwd ?? spawnConfig.cwd,
+    env: opts?.env ?? spawnConfig.env,
+    timeoutMs: opts?.timeoutMs ?? spawnConfig.timeoutMs,
     sessionId: opts?.sessionId,
   }
   const args = backend.buildArgs(prompt, config)
 
-  const child = spawn(execPath, args, {
+  const child = spawn(spawnConfig.execPath, args, {
     env: { ...process.env, ...config.env },
     cwd: config.cwd || process.cwd(),
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -128,6 +129,7 @@ export async function* runAgentStream(
   // Buffer stderr non-diagnostic lines as potential thinking content.
   // Only emit if stdout produces nothing (fallback for agents that
   // write everything to stderr).
+  const pendingEvents: AgentEvent[] = []
   let stderrBuf = ''
   const stderrThinking: string[] = []
 
