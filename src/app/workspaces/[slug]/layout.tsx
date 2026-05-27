@@ -9,6 +9,8 @@ import AgentActivityPanel from '@/components/agents/AgentActivityPanel';
 import { SidebarClient } from './sidebar-client';
 import { GlobalSearch } from '@/components/ui/GlobalSearch';
 import { SearchTrigger } from '@/components/ui/SearchTrigger';
+import { FloatingAgentProvider } from '@/components/agents/FloatingAgentContext';
+import FloatingAgentChat from '@/components/agents/FloatingAgentChat';
 
 export default async function WorkspaceLayout({
   children,
@@ -29,30 +31,33 @@ export default async function WorkspaceLayout({
   const slug = params.slug;
 
   return (
-    <div className="min-h-screen flex">
-      <SidebarClient
-        slug={slug}
-        workspaceName={ws.name}
-        agentPanel={<AgentActivityPanel slug={slug} />}
-        userInfo={
-          <div className="flex items-center gap-2">
-            <span className="truncate">{session.user?.name}</span>
-            <SignOutButton />
-          </div>
-        }
-      />
+    <FloatingAgentProvider workspaceSlug={slug}>
+      <div className="min-h-screen flex">
+        <SidebarClient
+          slug={slug}
+          workspaceName={ws.name}
+          agentPanel={<AgentActivityPanel slug={slug} />}
+          userInfo={
+            <div className="flex items-center gap-2">
+              <span className="truncate">{session.user?.name}</span>
+              <SignOutButton />
+            </div>
+          }
+        />
 
-      {/* Main content */}
-      <div className="flex-1 min-w-0">
-        {/* Top bar */}
-        <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between h-12">
-          <SearchTrigger />
-          <NotificationBell />
-        </header>
-        {children}
+        {/* Main content */}
+        <div id="main-content" className="flex-1 min-w-0 relative">
+          {/* Top bar */}
+          <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between h-12 relative z-10">
+            <SearchTrigger />
+            <NotificationBell />
+          </header>
+          {children}
+          <FloatingAgentChat />
+        </div>
+
+        <GlobalSearch slug={slug} />
       </div>
-
-      <GlobalSearch slug={slug} />
-    </div>
+    </FloatingAgentProvider>
   );
 }

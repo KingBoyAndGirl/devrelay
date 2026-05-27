@@ -305,3 +305,14 @@ export const feedback = sqliteTable('feedback', {
   createdAt:   text('created_at').notNull(),
   updatedAt:   text('updated_at').notNull(),
 });
+
+// ===== Test Space =====
+export const testSpaces = sqliteTable('test_spaces', {
+  id:          text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id),
+  name:        text('name').notNull().default('default'),
+  path:        text('path').notNull(),
+  status:      text('status').notNull().default('active'), // active / archived
+  createdAt:   text('created_at').notNull(),
+  updatedAt:   text('updated_at').notNull(),
+});

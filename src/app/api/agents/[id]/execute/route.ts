@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db/client';
-import { agents, activities, projectRepos, workspaces } from '@/lib/db/schema';
+import { agents, activities, projectRepos, workspaces, testSpaces } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { config } from '@/lib/config';
 import { buildSpawnConfig, runAgentStream, classifyStderr, defaultLimiter } from '@/lib/agents/spawn';
 import { ensureWorktree, getRepoWorkdir } from '@/lib/git/worktree';
 import { runAutoPR } from '@/lib/git/auto-pr';
 import { createId } from '@paralleldrive/cuid2';
+import { mkdir } from 'fs/promises';
+import { join } from 'path';
+import { existsSync } from 'fs';
 
 const SIDECAR_URL = config.agents.sidecarUrl;
 const SIDECAR_TOKEN_ENV = config.agents.agentToken;
@@ -103,6 +106,38 @@ export async function POST(
         spawnConfig.cwd = workdir;
       }
     } catch { /* worktree not available, run in default cwd */ }
+  } else {
+    // Use test space when no project context
+    try {
+      const TEST_SPACES_ROOT = join(process.env.HOME || '/tmp', '.devrelay', 'spaces');
+      let testSpace = await db.query.testSpaces.findFirst({
+        where: and(
+          eq(testSpaces.workspaceId, agent.workspaceId),
+          eq(testSpaces.name, 'default')
+        ),
+      });
+
+      if (!testSpace) {
+        const spacePath = join(TEST_SPACES_ROOT, agent.workspaceId, 'test');
+        if (!existsSync(spacePath)) {
+          await mkdir(spacePath, { recursive: true });
+        }
+        const now = new Date().toISOString();
+        const id = createId();
+        await db.insert(testSpaces).values({
+          id,
+          workspaceId: agent.workspaceId,
+          name: 'default',
+          path: spacePath,
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        });
+        testSpace = { id, workspaceId: agent.workspaceId, name: 'default', path: spacePath, status: 'active', createdAt: now, updatedAt: now };
+      }
+
+      spawnConfig.cwd = testSpace.path;
+    } catch { /* test space not available, run in default cwd */ }
   }
 
   // Log execution start
@@ -212,10 +247,12 @@ async function proxyToSidecar(
       if (!line.startsWith('data: ')) continue;
       try {
         const event = JSON.parse(line.slice(6));
-        if (event.type === 'stdout') chunks.push(event.text);
-        else if (event.type === 'stderr') errors.push(event.text);
-        else if (event.type === 'exit') exitCode = event.exitCode;
-        else if (event.type === 'timeout') timedOut = true;
+        if (event.type === 'text') chunks.push(event.content ?? '');
+        else if (event.type === 'exit') {
+          exitCode = event.exitCode;
+          if (event.finalStatus === 'timeout') timedOut = true;
+        }
+        else if (event.type === 'error') errors.push(event.content ?? '');
       } catch { /* ignore parse errors */ }
     }
   }
@@ -268,8 +305,11 @@ async function runStreaming(
           const line = `data: ${JSON.stringify(event)}\n\n`;
           controller.enqueue(encoder.encode(line));
 
-          if (event.type === 'exit') { exitCode = event.exitCode ?? null; break; }
-          if (event.type === 'timeout') { timedOut = true; break; }
+          if (event.type === 'exit') {
+            exitCode = event.exitCode ?? null;
+            if (event.finalStatus === 'timeout') timedOut = true;
+            break;
+          }
           if (event.type === 'error') { hadError = true; break; }
         }
       } catch (err: any) {
@@ -339,11 +379,12 @@ async function runSync(
     const signal = AbortSignal.timeout(spawnConfig.timeoutMs);
 
     for await (const event of runAgentStream(spawnConfig, prompt, { heartbeatMs, signal })) {
-      if (event.type === 'stdout') chunks.push(event.data!);
-      else if (event.type === 'stderr') errors.push(event.data!);
-      else if (event.type === 'timeout') timedOut = true;
-      else if (event.type === 'exit') exitCode = event.exitCode ?? null;
-      else if (event.type === 'error') { errors.push(event.error!); break; }
+      if (event.type === 'text') chunks.push(event.content ?? '');
+      else if (event.type === 'exit') {
+        exitCode = event.exitCode ?? null;
+        if (event.finalStatus === 'timeout') timedOut = true;
+      }
+      else if (event.type === 'error') { errors.push(event.content ?? ''); break; }
     }
   } catch (err: any) {
     errors.push(err.message);
