@@ -1,6 +1,7 @@
 import { createServer } from 'http';
 import { parse } from 'url';
 import { spawn, ChildProcess } from 'child_process';
+import { join } from 'path';
 import next from 'next';
 import { Server as SocketIOServer } from 'socket.io';
 import { config } from './src/lib/config';
@@ -18,7 +19,9 @@ let sidecarRestarts = 0;
 function startSidecar(): ChildProcess | null {
   if (process.env.NO_SIDECAR) return null;
 
-  const child = spawn('npx', ['tsx', 'src/devrelay/index.ts'], {
+  // Use Go sidecar binary
+  const sidecarPath = join(__dirname, 'packages', 'devrelay-agent', 'devrelay');
+  const child = spawn(sidecarPath, ['start'], {
     env: {
       ...process.env,
       DEVRELAY_AGENT_PORT: String(sidecarPort),

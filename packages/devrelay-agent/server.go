@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -12,16 +11,14 @@ import (
 	"time"
 )
 
-// ── Types ───────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────
 
 type ExecOptions struct {
 	Cwd              string
 	Model            string
 	TimeoutMs        int
 	ResumeSessionID  string
-	SystemPrompt     string
 	EnvVars          map[string]string
-	MaxTurns         int
 }
 
 type Message struct {
@@ -41,39 +38,19 @@ type Result struct {
 
 type Backend interface {
 	Name() string
-	BuildArgs(prompt, sessionID string) []string
 	Execute(ctx context.Context, prompt string, opts ExecOptions, msgCh chan<- Message, resCh chan<- Result)
 }
 
-// ── Concurrency Limiter ─────────────────────────────────────────
+// ── Concurrency Limiter ──────────────────────────────────────────
 
-type limiter struct {
-	ch chan struct{}
-}
+type limiter struct{ ch chan struct{} }
 
-func newLimiter(n int) *limiter {
-	return &limiter{ch: make(chan struct{}, n)}
-}
+func newLimiter(n int) *limiter { return &limiter{ch: make(chan struct{}, n)} }
+func (l *limiter) acquire()     { l.ch <- struct{}{} }
+func (l *limiter) release()     { <-l.ch }
+func (l *limiter) active() int  { return len(l.ch) }
 
-func (l *limiter) acquire() {
-	l.ch <- struct{}{}
-}
-
-func (l *limiter) release() {
-	<-l.ch
-}
-
-func (l *limiter) active() int {
-	return len(l.ch)
-}
-
-// ── Server ──────────────────────────────────────────────────────
-
-type server struct {
-	cfg      func() Config
-	backends map[string]Backend
-	limiter  *limiter
-}
+// ── Config ───────────────────────────────────────────────────────
 
 type Config struct {
 	Port          int
@@ -84,24 +61,23 @@ type Config struct {
 	HeartbeatMs   int
 }
 
+// ── Server ───────────────────────────────────────────────────────
+
+type server struct {
+	cfg      func() Config
+	backends map[string]Backend
+	limiter  *limiter
+}
+
 func newServer() *server {
 	cfg := resolveConfig()
 	return &server{
-		cfg: func() Config {
-			c := resolveConfig()
-			return Config{
-				Port:          c.Port,
-				Token:         c.Token,
-				ServerURL:     c.ServerURL,
-				MaxConcurrent: c.MaxConcurrent,
-				TimeoutMs:     c.TimeoutMs,
-				HeartbeatMs:   c.HeartbeatMs,
-			}
-		},
+		cfg: func() Config { return resolveConfig() },
 		backends: map[string]Backend{
-			"claude": &claudeBackend{},
-			"codex":  &codexBackend{},
-			"hermes": &hermesBackend{},
+			"claude":   &claudeBackend{},
+			"codex":    &codexBackend{},
+			"hermes":   &hermesBackend{},
+			
 		},
 		limiter: newLimiter(cfg.MaxConcurrent),
 	}
@@ -115,7 +91,41 @@ func (s *server) checkAuth(r *http.Request) bool {
 	return r.Header.Get("Authorization") == "Bearer "+cfg.Token
 }
 
-// ── SSE Helpers ─────────────────────────────────────────────────
+// ServeHTTP implements http.Handler interface
+func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// CORS preflight
+	if r.Method == "OPTIONS" {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Auth check (except health)
+	if r.URL.Path != "/health" && !s.checkAuth(r) {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Route
+	switch r.URL.Path {
+	case "/health":
+		s.handleHealth(w, r)
+	case "/discover":
+		s.handleDiscover(w, r)
+	case "/execute":
+		if r.Method != "POST" {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleExecute(w, r)
+	default:
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	}
+}
+
+// ── SSE Helpers ──────────────────────────────────────────────────
 
 type sseWriter struct {
 	w       http.ResponseWriter
@@ -148,11 +158,8 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"status":        "ok",
-		"activeCount":   s.limiter.active(),
-		"maxConcurrent": cfg.MaxConcurrent,
-		"queueLength":   0,
-		"uptime":        time.Since(startTime).Seconds(),
+		"status": "ok", "activeCount": s.limiter.active(),
+		"maxConcurrent": cfg.MaxConcurrent, "queueLength": 0,
 	})
 }
 
@@ -167,16 +174,11 @@ func (s *server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 	var clis []cliInfo
 	for _, bin := range knownCLIs {
 		info := cliInfo{Bin: bin}
-		path, err := exec.LookPath(bin)
-		if err == nil {
-			info.Found = true
-			info.Path = path
-			out, err := exec.Command(bin, "--version").CombinedOutput()
-			if err == nil {
+		if path, err := exec.LookPath(bin); err == nil {
+			info.Found, info.Path = true, path
+			if out, err := exec.Command(bin, "--version").CombinedOutput(); err == nil {
 				info.Version = strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
-				if len(info.Version) > 200 {
-					info.Version = info.Version[:200]
-				}
+				if len(info.Version) > 200 { info.Version = info.Version[:200] }
 			}
 		}
 		clis = append(clis, info)
@@ -187,7 +189,6 @@ func (s *server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleExecute(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg()
-
 	var req struct {
 		CLI       string            `json:"cli"`
 		Prompt    string            `json:"prompt"`
@@ -198,23 +199,17 @@ func (s *server) handleExecute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON"}`, 400)
 		return
 	}
-
 	if strings.TrimSpace(req.Prompt) == "" {
 		http.Error(w, `{"error":"prompt is required"}`, 400)
 		return
 	}
-
 	if req.CLI == "" {
 		req.CLI = "claude"
 	}
-
 	if s.limiter.active() >= cfg.MaxConcurrent {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(429)
-		json.NewEncoder(w).Encode(map[string]any{
-			"error":         "Too many agents running",
-			"queuePosition": 1,
-		})
+		json.NewEncoder(w).Encode(map[string]any{"error": "Too many agents running", "queuePosition": 1})
 		return
 	}
 
@@ -227,7 +222,6 @@ func (s *server) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sse := newSSEWriter(w)
-
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.TimeoutMs)*time.Millisecond)
 	defer cancel()
 
@@ -235,151 +229,65 @@ func (s *server) handleExecute(w http.ResponseWriter, r *http.Request) {
 	resCh := make(chan Result, 1)
 
 	go backend.Execute(ctx, req.Prompt, ExecOptions{
-		EnvVars:         req.EnvVars,
-		ResumeSessionID: req.SessionID,
-		Cwd:             resolveCWD(),
-		TimeoutMs:       cfg.TimeoutMs,
+		EnvVars: req.EnvVars, ResumeSessionID: req.SessionID, Cwd: resolveCWD(), TimeoutMs: cfg.TimeoutMs,
 	}, msgCh, resCh)
 
 	heartbeat := time.NewTicker(time.Duration(cfg.HeartbeatMs) * time.Millisecond)
 	defer heartbeat.Stop()
+
+	hadTextOutput := false
 
 	for {
 		select {
 		case msg := <-msgCh:
 			switch msg.Type {
 			case "text":
-				sse.write(map[string]any{"type": "stdout", "data": msg.Text + "\n"})
+				hadTextOutput = true
+				sse.write(map[string]any{"type": "text", "content": msg.Text})
 			case "thinking":
-				sse.write(map[string]any{"type": "stdout", "data": msg.Text + "\n"})
+				sse.write(map[string]any{"type": "thinking", "content": msg.Text})
 			case "tool_use":
-				data := fmt.Sprintf("Tool: %s\n%s", msg.ToolName, msg.ToolInput)
-				sse.write(map[string]any{"type": "stdout", "data": data})
+				sse.write(map[string]any{"type": "tool_use", "tool": msg.ToolName, "input": msg.ToolInput})
 			case "tool_result":
-				sse.write(map[string]any{"type": "stdout", "data": msg.Text + "\n"})
+				sse.write(map[string]any{"type": "tool_result", "output": msg.Text})
 			case "error":
-				sse.write(map[string]any{"type": "error", "error": msg.Text})
-			case "raw":
-				sse.write(map[string]any{"type": "stdout", "data": msg.Text})
+				sse.write(map[string]any{"type": "error", "content": msg.Text})
 			}
 
 		case result := <-resCh:
-			// Flush accumulated output (e.g. Codex deltas) before exit
-			if result.Output != "" {
-				sse.write(map[string]any{"type": "stdout", "data": result.Output})
+			// Only send result.Output as fallback if no text was sent via msgCh.
+			// Backends already send final output through msgCh — sending again
+			// here causes duplicate content in the UI.
+			if !hadTextOutput && result.Output != "" {
+				sse.write(map[string]any{"type": "text", "content": result.Output})
 			}
 			sse.write(map[string]any{
-				"type":      "exit",
-				"exitCode":  result.ExitCode,
-				"status":    result.Status,
-				"error":     result.Error,
-				"sessionId": result.SessionID,
+				"type": "exit", "exitCode": result.ExitCode, "status": result.Status,
+				"error": result.Error, "sessionId": result.SessionID,
+				"finalStatus": normalizeStatus(result.Status),
 			})
-			// If resume failed with stale session, signal for retry
-			if result.Status == "failed" && req.SessionID != "" && result.SessionID == "" {
-				sse.write(map[string]any{"type": "resume_failed", "stale": true})
-			}
 			return
 
 		case <-heartbeat.C:
-			sse.write(map[string]any{"type": "heartbeat"})
-
+			sse.write(map[string]any{"type": "status", "status": "heartbeat"})
 		case <-ctx.Done():
-			sse.write(map[string]any{"type": "timeout"})
+			sse.write(map[string]any{"type": "exit", "finalStatus": "timeout"})
 			return
-
 		case <-r.Context().Done():
 			return
 		}
 	}
 }
 
-func (s *server) handleMCP(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Jsonrpc string          `json:"jsonrpc"`
-		ID      any             `json:"id"`
-		Method  string          `json:"method"`
-		Params  json.RawMessage `json:"params"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	switch req.Method {
-	case "initialize":
-		json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req.ID,
-			"result": map[string]any{
-				"protocolVersion": "2024-11-05",
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]string{"name": "devrelay", "version": "1.0.0"},
-			},
-		})
-	case "tools/list":
-		tools := []map[string]any{
-			{
-				"name":        "claude_code_execute",
-				"description": "Execute a prompt using Claude Code CLI.",
-				"inputSchema": map[string]any{
-					"type":       "object",
-					"properties": map[string]any{"prompt": map[string]string{"type": "string"}},
-					"required":   []string{"prompt"},
-				},
-			},
-		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req.ID,
-			"result":  map[string]any{"tools": tools},
-		})
+func normalizeStatus(s string) string {
+	switch s {
+	case "completed":
+		return "completed"
+	case "timeout":
+		return "timeout"
+	case "cancelled", "aborted":
+		return "aborted"
 	default:
-		json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      req.ID,
-			"error":   map[string]any{"code": -32601, "message": "Method not found"},
-		})
-	}
-}
-
-func (s *server) handleCORS(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-	w.WriteHeader(204)
-}
-
-func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("DEBUG %s %s", r.Method, r.URL.Path)
-	if r.Method == "OPTIONS" {
-		s.handleCORS(w, r)
-		return
-	}
-
-	// Health check doesn't require auth
-	if r.URL.Path == "/health" && r.Method == "GET" {
-		s.handleHealth(w, r)
-		return
-	}
-
-	if !s.checkAuth(r) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(401)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
-		return
-	}
-
-	switch {
-	case r.URL.Path == "/discover" && r.Method == "GET":
-		s.handleDiscover(w, r)
-	case r.URL.Path == "/execute" && r.Method == "POST":
-		s.handleExecute(w, r)
-	case r.URL.Path == "/mcp" && r.Method == "POST":
-		s.handleMCP(w, r)
-	default:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(404)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return "failed"
 	}
 }

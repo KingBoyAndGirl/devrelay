@@ -162,6 +162,10 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 
 	// Stdout reader goroutine
 	stdoutDone := make(chan struct{})
+	// Track if we've already sent the final agent_message to avoid duplicates
+	var finalMessageSent bool
+	// Accumulate thinking content and send as one block
+	var thinkingBuf strings.Builder
 	go func() {
 		for rpc.scanner.Scan() {
 			rpc.dispatch(rpc.scanner.Text(), func(method string, params json.RawMessage) {
@@ -178,8 +182,12 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					json.Unmarshal(params, &ev)
 					switch ev.Type {
 					case "agent_message":
-						output.WriteString(ev.Message.Content)
-						msgCh <- Message{Type: "text", Text: ev.Message.Content}
+						// Only send if we haven't sent via item/agent_message yet
+						if !finalMessageSent {
+							output.WriteString(ev.Message.Content)
+							msgCh <- Message{Type: "text", Text: ev.Message.Content}
+							finalMessageSent = true
+						}
 					case "task_complete", "turn_done":
 						turnDone <- "completed"
 					}
@@ -199,7 +207,22 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						output.WriteString(ev.Delta)
 					}
 
+				// v2 reasoning/thinking content - accumulate and send as one block
+				case "reasoning_summary/text_delta", "reasoning/text_delta",
+					"item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
+					var ev struct {
+						Delta string `json:"delta"`
+					}
+					if json.Unmarshal(params, &ev) == nil && ev.Delta != "" {
+						thinkingBuf.WriteString(ev.Delta)
+					}
+
 				case "turn/completed", "turn/aborted":
+					// Flush accumulated thinking before turn completes
+					if thinkingBuf.Len() > 0 {
+						msgCh <- Message{Type: "thinking", Text: thinkingBuf.String()}
+						thinkingBuf.Reset()
+					}
 					var ev struct {
 						Turn struct {
 							Status string `json:"status"`
@@ -212,6 +235,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					}
 
 				case "thread/status/changed":
+					// Flush accumulated thinking when thread goes idle
 					var ev struct {
 						Status struct {
 							Type string `json:"type"`
@@ -219,8 +243,16 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					}
 					json.Unmarshal(params, &ev)
 					if turnInProgress && ev.Status.Type == "idle" {
+						if thinkingBuf.Len() > 0 {
+							msgCh <- Message{Type: "thinking", Text: thinkingBuf.String()}
+							thinkingBuf.Reset()
+						}
 						turnDone <- "completed"
 					} else if turnInProgress && (ev.Status.Type == "systemError" || ev.Status.Type == "failed") {
+						if thinkingBuf.Len() > 0 {
+							msgCh <- Message{Type: "thinking", Text: thinkingBuf.String()}
+							thinkingBuf.Reset()
+						}
 						turnDone <- "failed"
 					}
 
@@ -232,9 +264,10 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 						} `json:"item"`
 					}
 					json.Unmarshal(params, &ev)
-					if ev.Item.Text != "" {
+					if ev.Item.Text != "" && !finalMessageSent {
 						output.WriteString(ev.Item.Text)
 						msgCh <- Message{Type: "text", Text: ev.Item.Text}
+						finalMessageSent = true
 					}
 
 				case "item/command_execution":
@@ -257,11 +290,12 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 					"remoteControl/status/changed",
 					"item/started", "item/completed",
 					"turn/started", "turn/plan/updated",
-					"plan/delta", "reasoning_summary/text_delta",
+					"plan/delta",
 					"command_exec/output_delta", "file_change/output_delta",
 					"process/output_delta", "process/exited",
 					"thread/token_usage/updated", "thread/tokenUsage/updated",
-					"account/rateLimits/updated", "thread/goal/cleared":
+					"account/rateLimits/updated", "thread/goal/cleared",
+					"item/reasoning/summaryPartAdded":
 					// silently ignore
 
 				default:
@@ -381,11 +415,6 @@ done:
 	// Retry logic: if resume was attempted but failed with no new session, clear session
 	if opts.ResumeSessionID != "" && finalStatus == "failed" && sessionID == "" {
 		sessionID = "" // Signal to caller that resume didn't land
-	}
-
-	// Flush accumulated output as a single message before exit
-	if output.Len() > 0 {
-		msgCh <- Message{Type: "text", Text: output.String()}
 	}
 
 	resCh <- Result{
