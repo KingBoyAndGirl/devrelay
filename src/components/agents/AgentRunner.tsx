@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react'
 import type { AgentEvent } from '@/lib/agents/backends/types'
 
 // ── Types ────────────────────────────────────────────────────────
@@ -16,6 +16,15 @@ interface Turn {
   sessionId?: string
 }
 
+interface Conversation {
+  id: string
+  title: string
+  turns: Turn[]
+  sessionId?: string
+  createdAt: number
+  updatedAt: number
+}
+
 interface AgentRunnerProps {
   agentId: string
   agentName: string
@@ -24,6 +33,15 @@ interface AgentRunnerProps {
   taskId?: string
   positioned?: 'inline' | 'drawer' | 'floating'
   hideHeader?: boolean
+  onConversationChange?: (info: { conversations: Conversation[]; activeConvId: string }) => void
+}
+
+export interface AgentRunnerHandle {
+  newConversation: () => void
+  conversations: Conversation[]
+  activeConvId: string
+  switchConversation: (id: string) => void
+  deleteConversation: (id: string) => void
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -38,17 +56,146 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+function createConversation(): Conversation {
+  return {
+    id: Date.now().toString(),
+    title: '新会话',
+    turns: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  }
+}
+
+function loadConversations(agentId: string): { conversations: Conversation[]; activeConvId: string } {
+  if (typeof window === 'undefined') return { conversations: [], activeConvId: '' }
+  try {
+    const raw = localStorage.getItem(`agent-conversations-${agentId}`)
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return { conversations: [], activeConvId: '' }
+}
+
+function saveConversations(agentId: string, conversations: Conversation[], activeConvId: string) {
+  try {
+    // Strip running turns before saving
+    const cleaned = conversations.map(c => ({
+      ...c,
+      turns: c.turns.filter(t => t.status !== 'running'),
+    }))
+    localStorage.setItem(`agent-conversations-${agentId}`, JSON.stringify({ conversations: cleaned, activeConvId }))
+  } catch {}
+}
+
 // ── Component ────────────────────────────────────────────────────
 
-export default function AgentRunner({ agentId, agentName, onClose, projectId, taskId, positioned = 'inline', hideHeader = false }: AgentRunnerProps) {
-  const [turns, setTurns] = useState<Turn[]>([])
+const AgentRunner = forwardRef<AgentRunnerHandle, AgentRunnerProps>(function AgentRunner({ agentId, agentName, onClose, projectId, taskId, positioned = 'inline', hideHeader = false, onConversationChange }, ref) {
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [activeConvId, setActiveConvId] = useState('')
   const [activeTurn, setActiveTurn] = useState<Turn | null>(null)
   const [prompt, setPrompt] = useState('')
   const [taskContext, setTaskContext] = useState<{ id: string; title: string; description: string | null } | null>(null)
   const [contextUsed, setContextUsed] = useState(false)
+  const [showConvList, setShowConvList] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const userScrolledUp = useRef(false)
+  const convListRef = useRef<HTMLDivElement>(null)
+
+  // Load conversations on mount
+  useEffect(() => {
+    const { conversations: saved, activeConvId: savedId } = loadConversations(agentId)
+    if (saved.length > 0) {
+      setConversations(saved)
+      setActiveConvId(savedId || saved[saved.length - 1].id)
+    } else {
+      const conv = createConversation()
+      setConversations([conv])
+      setActiveConvId(conv.id)
+    }
+  }, [agentId])
+
+  // Close conv list on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (convListRef.current && !convListRef.current.contains(e.target as Node)) {
+        setShowConvList(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  // Derived state
+  const currentConv = conversations.find(c => c.id === activeConvId) || conversations[0]
+  const currentTurns = currentConv?.turns || []
+
+  // Save on change
+  useEffect(() => {
+    if (conversations.length > 0 && activeConvId) {
+      saveConversations(agentId, conversations, activeConvId)
+      onConversationChange?.({ conversations, activeConvId })
+    }
+  }, [conversations, activeConvId, agentId, onConversationChange])
+
+  // ── Conversation actions ────────────────────────────────────────
+
+  function handleNewConversation() {
+    if (activeTurn?.status === 'running') return
+    const conv = createConversation()
+    setConversations(prev => [...prev, conv])
+    setActiveConvId(conv.id)
+    setActiveTurn(null)
+    setContextUsed(false)
+  }
+
+  function handleSwitchConversation(convId: string) {
+    if (convId === activeConvId || activeTurn?.status === 'running') return
+    setActiveConvId(convId)
+    setActiveTurn(null)
+    setShowConvList(false)
+  }
+
+  function handleDeleteConversation(convId: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (activeTurn?.status === 'running') return
+    setConversations(prev => {
+      const next = prev.filter(c => c.id !== convId)
+      if (next.length === 0) {
+        const conv = createConversation()
+        setActiveConvId(conv.id)
+        return [conv]
+      }
+      if (convId === activeConvId) {
+        setActiveConvId(next[next.length - 1].id)
+      }
+      return next
+    })
+    setActiveTurn(null)
+  }
+
+  // ── Expose handle ─────────────────────────────────────────────
+
+  useImperativeHandle(ref, () => ({
+    newConversation: handleNewConversation,
+    conversations,
+    activeConvId,
+    switchConversation: handleSwitchConversation,
+    deleteConversation: (id: string) => handleDeleteConversation(id, { stopPropagation: () => {} } as React.MouseEvent),
+  }), [conversations, activeConvId, handleNewConversation, handleSwitchConversation])
+
+  // ── Turn management ─────────────────────────────────────────────
+
+  function updateCurrentTurn(turns: Turn[], sessionId?: string) {
+    setConversations(prev => prev.map(c => {
+      if (c.id !== activeConvId) return c
+      const title = c.title === '新会话' && turns.length > 0
+        ? turns[0].prompt.slice(0, 30) + (turns[0].prompt.length > 30 ? '...' : '')
+        : c.title
+      return { ...c, turns, sessionId, title, updatedAt: Date.now() }
+    }))
+  }
+
+  // ── Task context ────────────────────────────────────────────────
 
   useEffect(() => {
     if (!taskId) return
@@ -67,6 +214,8 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
       })
   }, [taskId])
 
+  // ── Scroll ──────────────────────────────────────────────────────
+
   const scrollToBottom = useCallback((force = false) => {
     const el = scrollRef.current
     if (!el) return
@@ -83,6 +232,8 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
     if (activeTurn?.status === 'running') scrollToBottom(false)
   }, [activeTurn?.events, scrollToBottom])
 
+  // ── Execute ─────────────────────────────────────────────────────
+
   async function handleRun() {
     const text = prompt.trim()
     if (!text) return
@@ -91,9 +242,8 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
     setPrompt('')
     if (taskContext && !contextUsed) setContextUsed(true)
 
-    // Get sessionId from the last completed turn for multi-turn conversation
-    const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null
-    const sessionId = lastTurn?.sessionId
+    // Get sessionId from current conversation
+    const sessionId = currentConv?.sessionId
 
     const turn: Turn = {
       id: Date.now().toString(),
@@ -120,7 +270,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
         const err = await res.json().catch(() => ({}))
         const finished: Turn = { ...turn, status: 'error', errorMessage: err.error ?? `HTTP ${res.status}`, endedAt: Date.now() }
         setActiveTurn(finished)
-        setTurns(prev => [...prev, finished])
+        updateCurrentTurn([...currentTurns, finished])
         return
       }
 
@@ -153,7 +303,7 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
                 sessionId: event.sessionId,
               }
               setActiveTurn(finished)
-              setTurns(prev => [...prev, finished])
+              updateCurrentTurn([...currentTurns, finished], event.sessionId)
               return finished
             }
 
@@ -166,16 +316,16 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
       // Stream ended without explicit exit event
       const finished: Turn = { ...turn, events: [...turn.events], status: 'done', endedAt: Date.now() }
       setActiveTurn(finished)
-      setTurns(prev => [...prev, finished])
+      updateCurrentTurn([...currentTurns, finished])
     } catch (err: any) {
       if (err.name === 'AbortError') {
         const finished: Turn = { ...turn, events: [...turn.events], status: 'done', endedAt: Date.now() }
         setActiveTurn(finished)
-        setTurns(prev => [...prev, finished])
+        updateCurrentTurn([...currentTurns, finished])
       } else {
         const finished: Turn = { ...turn, events: [...turn.events], status: 'error', errorMessage: `连接错误: ${err.message}`, endedAt: Date.now() }
         setActiveTurn(finished)
-        setTurns(prev => [...prev, finished])
+        updateCurrentTurn([...currentTurns, finished])
       }
     }
   }
@@ -186,8 +336,10 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleRun() }
   }
 
-  const allTurns = [...turns]
-  if (activeTurn && !turns.find(t => t.id === activeTurn.id)) allTurns.push(activeTurn)
+  // ── Render ──────────────────────────────────────────────────────
+
+  const allTurns = [...currentTurns]
+  if (activeTurn && !currentTurns.find(t => t.id === activeTurn.id)) allTurns.push(activeTurn)
 
   const terminal = (
     <div className={`flex flex-col bg-white border border-gray-200 rounded-xl overflow-hidden transition-all ${
@@ -204,11 +356,54 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
               <p className="text-sm font-medium text-gray-900 truncate">{agentName}</p>
               {activeTurn?.status === 'running' && <p className="text-xs text-blue-600">正在执行...</p>}
             </div>
+            {/* Conversation selector */}
+            <div className="relative ml-2" ref={convListRef}>
+              <button
+                onClick={() => setShowConvList(!showConvList)}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded px-2 py-1 transition-colors max-w-[150px]"
+              >
+                <span className="truncate">{currentConv?.title || '新会话'}</span>
+                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showConvList && (
+                <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10 max-h-60 overflow-y-auto">
+                  <div className="px-3 py-1.5 flex items-center justify-between border-b border-gray-100">
+                    <span className="text-xs text-gray-400">会话列表</span>
+                    <button onClick={handleNewConversation} className="text-xs text-blue-600 hover:text-blue-800">+ 新建</button>
+                  </div>
+                  {conversations.slice().reverse().map(conv => (
+                    <div
+                      key={conv.id}
+                      onClick={() => handleSwitchConversation(conv.id)}
+                      className={`flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-50 ${
+                        conv.id === activeConvId ? 'bg-blue-50' : ''
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-gray-800 truncate">{conv.title}</p>
+                        <p className="text-xs text-gray-400">{formatTime(conv.createdAt)}</p>
+                      </div>
+                      {conversations.length > 1 && (
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          className="ml-2 text-gray-300 hover:text-red-500 p-0.5"
+                          title="删除会话"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            {turns.length > 0 && (
-              <button onClick={() => { setTurns([]); setActiveTurn(null) }} className="text-gray-400 hover:text-gray-600 text-xs">清空</button>
-            )}
+            <button onClick={handleNewConversation} className="text-gray-400 hover:text-gray-600 text-xs" title="新建会话">+ 新建</button>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
           </div>
         </div>
@@ -327,12 +522,13 @@ export default function AgentRunner({ agentId, agentName, onClose, projectId, ta
     return <div className="fixed bottom-4 right-4 z-50 w-96 max-md:inset-0 max-md:w-full">{terminal}</div>
   }
   return terminal
-}
+})
+
+export default AgentRunner
 
 // ── Event Renderer ───────────────────────────────────────────────
 
 function TurnEvents({ events }: { events: AgentEvent[] }) {
-  // Merge consecutive text events into a single block for natural reading
   const segments = mergeTextEvents(events)
 
   return (
@@ -425,15 +621,12 @@ function mergeTextEvents(events: AgentEvent[]): Segment[] {
         break
       case 'status':
       case 'exit':
-        // Don't render these as content
         break
       default: {
-        // Handle old-format events (stderr/stdout with data field)
         const anyEv = ev as any
         if (anyEv.type === 'stdout' && anyEv.data) {
           textBuf += anyEv.data
         } else if (anyEv.type === 'stderr' && anyEv.data) {
-          // Skip diagnostic stderr lines
           const diagPatterns = [/^Reading additional/i, /^OpenAI Codex/i, /^workdir:/i, /^model:/i, /^provider:/i, /^approval:/i, /^sandbox:/i, /^reasoning/i, /^session id:/i, /^-{3,}/, /^warning:/i, /^tokens used/i, /^\d{1,3}(,\d{3})*$/, /^Claude Code/i, /^Hermes v/i, /^user$/, /^assistant$/, /^codex$/i]
           const lines = anyEv.data.split('\n')
           for (const line of lines) {

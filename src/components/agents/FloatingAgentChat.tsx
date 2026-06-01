@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useFloatingAgent } from './FloatingAgentContext'
-import AgentRunner from './AgentRunner'
+import AgentRunner, { type AgentRunnerHandle } from './AgentRunner'
 
 const MIN_W = 320
 const MIN_H = 360
@@ -23,6 +23,12 @@ export default function FloatingAgentChat() {
   const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const selectorRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const runnerRef = useRef<AgentRunnerHandle>(null)
+  const [showConvMenu, setShowConvMenu] = useState(false)
+  const convMenuRef = useRef<HTMLDivElement>(null)
+  type ConvSummary = { id: string; title: string; createdAt: number }
+  const [convList, setConvList] = useState<ConvSummary[]>([])
+  const [activeConvId, setActiveConvId] = useState('')
 
   // Refs for resize state (persist across re-renders)
   const resizing = useRef(false)
@@ -38,6 +44,9 @@ export default function FloatingAgentChat() {
     function handleClick(e: MouseEvent) {
       if (selectorRef.current && !selectorRef.current.contains(e.target as Node)) {
         setShowSelector(false)
+      }
+      if (convMenuRef.current && !convMenuRef.current.contains(e.target as Node)) {
+        setShowConvMenu(false)
       }
     }
     document.addEventListener('mousedown', handleClick)
@@ -215,6 +224,64 @@ export default function FloatingAgentChat() {
               </div>
             </div>
 
+            {/* Conversation selector */}
+            <div className="relative ml-auto mr-1 flex items-center gap-0.5" ref={convMenuRef}>
+              <button
+                onClick={() => setShowConvMenu(!showConvMenu)}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded px-2 py-1 transition-colors max-w-[120px]"
+              >
+                <span className="truncate">{convList.find(c => c.id === activeConvId)?.title || '新会话'}</span>
+                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <button
+                onClick={() => { runnerRef.current?.newConversation() }}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                title="新建会话"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+              {showConvMenu && (
+                <div className="absolute top-full right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-40 max-h-60 overflow-y-auto">
+                  <div className="px-3 py-1.5 flex items-center justify-between border-b border-gray-100">
+                    <span className="text-xs text-gray-400">会话列表</span>
+                    <button
+                      onClick={() => { runnerRef.current?.newConversation(); setShowConvMenu(false) }}
+                      className="text-xs text-blue-600 hover:text-blue-800"
+                    >+ 新建</button>
+                  </div>
+                  {convList.slice().reverse().map(conv => (
+                    <div
+                      key={conv.id}
+                      onClick={() => { runnerRef.current?.switchConversation(conv.id); setShowConvMenu(false) }}
+                      className={`flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-50 ${
+                        conv.id === activeConvId ? 'bg-blue-50' : ''
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-gray-800 truncate">{conv.title}</p>
+                        <p className="text-xs text-gray-400">{new Date(conv.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
+                      {convList.length > 1 && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); runnerRef.current?.deleteConversation(conv.id) }}
+                          className="ml-2 text-gray-300 hover:text-red-500 p-0.5"
+                          title="删除会话"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Actions */}
             <div className="flex items-center gap-1">
               <button
@@ -247,11 +314,16 @@ export default function FloatingAgentChat() {
           {/* Agent Runner */}
           <div className="flex-1 overflow-hidden">
             <AgentRunner
+              ref={runnerRef}
               agentId={selectedAgent.id}
               agentName={selectedAgent.name}
               onClose={closeChat}
               positioned="inline"
               hideHeader={true}
+              onConversationChange={(info) => {
+                setConvList(info.conversations.map(c => ({ id: c.id, title: c.title, createdAt: c.createdAt })))
+                setActiveConvId(info.activeConvId)
+              }}
             />
           </div>
 
