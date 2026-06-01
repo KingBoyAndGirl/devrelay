@@ -190,6 +190,7 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	if resumeRequested != "" {
 		resp, resumeErr := rpc.request(ctx, "session/resume", map[string]any{
 			"sessionId": resumeRequested,
+			"cwd":       opts.Cwd,
 		})
 		if resumeErr == nil {
 			sessionID = extractACPSessionID(resp)
